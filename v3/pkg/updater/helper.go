@@ -26,18 +26,20 @@ import (
 // command-line flags are never confused with helper plumbing.
 
 const (
-	envHelperMode   = "WAILS_UPDATER_HELPER"        // "1" to enter helper mode
-	envHelperTarget = "WAILS_UPDATER_HELPER_TARGET" // path of the running app to be replaced
-	envHelperNew    = "WAILS_UPDATER_HELPER_NEW"    // path of the verified new artifact
-	envHelperPID    = "WAILS_UPDATER_HELPER_PID"    // parent PID to wait for
-	envHelperLog    = "WAILS_UPDATER_HELPER_LOG"    // optional log file path
-	envHelperReady  = "WAILS_UPDATER_HELPER_READY"  // readiness status file path
+	envHelperMode        = "WAILS_UPDATER_HELPER"        // "1" to enter helper mode
+	envHelperTarget      = "WAILS_UPDATER_HELPER_TARGET" // path of the running app to be replaced
+	envHelperNew         = "WAILS_UPDATER_HELPER_NEW"    // path of the verified new artifact
+	envHelperPID         = "WAILS_UPDATER_HELPER_PID"    // parent PID to wait for
+	envHelperLog         = "WAILS_UPDATER_HELPER_LOG"    // optional log file path
+	envHelperReady       = "WAILS_UPDATER_HELPER_READY"  // readiness status file path
+	envHelperFrom        = "WAILS_UPDATER_HELPER_FROM"   // version being replaced
+	envHelperApplyOnExit = "WAILS_UPDATER_HELPER_APPLY_ON_EXIT"
 )
 
 // HandleHelperMode returns immediately when the current process was not
 // spawned as an updater helper. When it WAS spawned as a helper it performs
-// the swap, relaunches the application, and calls os.Exit — it never returns
-// in that case.
+// the swap and calls os.Exit — it never returns in that case. Helpers started
+// for ApplyOnExit do not relaunch the application.
 //
 // The Wails application package calls this from application.New so that
 // `app.Updater.Restart` works without users wiring anything by hand.
@@ -65,8 +67,9 @@ func HandleHelperMode() {
 	}
 	pid, _ := strconv.Atoi(os.Getenv(envHelperPID))
 	logPath := os.Getenv(envHelperLog)
+	applyOnExit := os.Getenv(envHelperApplyOnExit) == "1"
 
-	code := runHelperSwap(target, newPath, pid, logPath, waitForPID, osLauncher{})
+	code := runHelperSwapMode(target, newPath, pid, logPath, waitForPID, osLauncher{}, applyOnExit)
 	os.Exit(code)
 }
 
@@ -127,6 +130,10 @@ var swapRetryDelay = 500 * time.Millisecond
 // a restore that itself failed after an earlier failure. Every other code has
 // either changed nothing or rolled back to what was there before.
 func runHelperSwap(target, newPath string, parentPID int, logPath string, wait processWaiter, l launcher) int {
+	return runHelperSwapMode(target, newPath, parentPID, logPath, wait, l, false)
+}
+
+func runHelperSwapMode(target, newPath string, parentPID int, logPath string, wait processWaiter, l launcher, applyOnExit bool) int {
 	lg := openHelperLog(logPath)
 	defer lg.Close()
 
@@ -168,6 +175,7 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 
 	// The parent has exited. Clear helper mode before backup or replacement
 	// so both the new application and any recovered original boot normally.
+	from := os.Getenv(envHelperFrom)
 	clearHelperEnv()
 
 	// Re-validate the payload now the wait is over. The stat at the top of this
@@ -179,8 +187,10 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 	// already installed and leave it alone.
 	if err := validatePayloadForTarget(newPath, target); err != nil {
 		lg.logf("staged update is not installable: %v — aborting swap", err)
-		if err := l.launch(target); err != nil {
-			lg.logf("relaunch original failed: %v", err)
+		if !applyOnExit {
+			if err := l.launch(target); err != nil {
+				lg.logf("relaunch original failed: %v", err)
+			}
 		}
 		return 18
 	}
@@ -193,8 +203,10 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 		lg.logf("backup failed: %v", err)
 		// The original is untouched; relaunch it instead of restoring a
 		// potentially incomplete backup.
-		if err := l.launch(target); err != nil {
-			lg.logf("relaunch original failed: %v", err)
+		if !applyOnExit {
+			if err := l.launch(target); err != nil {
+				lg.logf("relaunch original failed: %v", err)
+			}
 		}
 		return 12
 	}
@@ -246,21 +258,25 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 		// here would first os.RemoveAll(target), which fails on the very
 		// lock that blocked the swap (and, on Unix .app bundles, needlessly
 		// deletes an intact original). Relaunch the original instead.
-		lg.logf("all swap attempts exhausted — relaunching intact original")
+		// On exit the app is quitting, so the original is kept but not relaunched.
+		lg.logf("all swap attempts exhausted — keeping intact original")
 		if _, err := os.Stat(target); err == nil {
-			if err := l.launch(target); err == nil {
+			var err error
+			if !applyOnExit {
+				err = l.launch(target)
+			}
+			if err == nil {
 				if err := os.RemoveAll(backup); err != nil {
 					lg.logf("backup cleanup: %v (non-fatal)", err)
 				}
 				return 13
-			} else {
-				lg.logf("relaunch original failed: %v — restoring backup", err)
 			}
+			lg.logf("relaunch original failed: %v — restoring backup", err)
 		}
 		// The target slot is missing (e.g. a directory swap cleared it
 		// before the move failed); fall back to the backup.
 		lg.logf("all swap attempts exhausted — restoring backup")
-		if err := restoreFromBackup(backup, target, l); err != nil {
+		if err := restoreFromBackupMode(backup, target, l, !applyOnExit); err != nil {
 			lg.logf("restore failed: %v", err)
 			return 14
 		}
@@ -275,20 +291,42 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 	// a check the original fails is not one the update is held to.
 	if err := validateInstalled(target, backup, lg); err != nil {
 		lg.logf("installed application failed validation: %v — restoring backup", err)
-		if err := restoreFromBackup(backup, target, l); err != nil {
+		if err := restoreFromBackupMode(backup, target, l, !applyOnExit); err != nil {
 			lg.logf("restore failed: %v", err)
 			return 20
 		}
 		return 19
 	}
 
-	if err := l.launch(target); err != nil {
-		lg.logf("launch new failed: %v — restoring backup", err)
-		if err := restoreFromBackup(backup, target, l); err != nil {
-			lg.logf("restore failed: %v", err)
-			return 16
+	if !applyOnExit {
+		marker := appliedMarker(target)
+		if from != "" {
+			// Without the marker the new version never sees OnUpdateApplied, so its post-update bookkeeping would be
+			// skipped; the old version runs again instead and the update can be retried.
+			if err := os.WriteFile(marker, []byte(from), 0o600); err != nil {
+				_ = os.Remove(marker)
+				lg.logf("applied marker: %v — restoring backup", err)
+				if err := restoreFromBackup(backup, target, l); err != nil {
+					lg.logf("restore failed: %v", err)
+					return 16
+				}
+				return 15
+			}
 		}
-		return 15
+
+		if err := l.launch(target); err != nil {
+			// A marker left behind names the restored version itself, which
+			// consumeAppliedMarker ignores.
+			if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+				lg.logf("applied marker cleanup: %v", err)
+			}
+			lg.logf("launch new failed: %v — restoring backup", err)
+			if err := restoreFromBackup(backup, target, l); err != nil {
+				lg.logf("restore failed: %v", err)
+				return 16
+			}
+			return 15
+		}
 	}
 
 	// Best-effort backup cleanup. The replaced app is now running.
@@ -313,14 +351,54 @@ func runHelperSwap(target, newPath string, parentPID int, logPath string, wait p
 	return 0
 }
 
+// appliedMarker is where the helper tells the relaunched application which
+// version it replaced, since environment variables do not survive a relaunch
+// through `open` on macOS. It sits beside the target, in the directory the
+// update already has to write to, rather than in a temp dir other local users
+// can write to.
+func appliedMarker(target string) string {
+	return filepath.Join(filepath.Dir(target), "."+filepath.Base(target)+".wails-updated")
+}
+
+// consumeAppliedMarker returns the version recorded by the helper that just
+// replaced this application, removing the marker so it is reported once. It
+// reports nothing when the marker cannot be removed, or when it names current,
+// which means the helper restored the old version after a failed launch.
+func consumeAppliedMarker(current string) (string, bool) {
+	target, err := resolveTarget()
+	if err != nil {
+		return "", false
+	}
+	path := appliedMarker(target)
+	// Reading a FIFO would block Init.
+	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	from, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	if err := os.Remove(path); err != nil {
+		return "", false
+	}
+	return string(from), string(from) != current
+}
+
 func restoreFromBackup(backup, target string, l launcher) error {
+	return restoreFromBackupMode(backup, target, l, true)
+}
+
+func restoreFromBackupMode(backup, target string, l launcher, launch bool) error {
 	if err := os.RemoveAll(target); err != nil {
 		return fmt.Errorf("remove broken target: %w", err)
 	}
 	if err := os.Rename(backup, target); err != nil {
 		return fmt.Errorf("restore: %w", err)
 	}
-	return l.launch(target)
+	if launch {
+		return l.launch(target)
+	}
+	return nil
 }
 
 // copyAny dispatches between file and directory copies. macOS .app bundles
@@ -453,7 +531,7 @@ func (h *helperLog) Close() {
 // process. Called after the parent exits and before backup or replacement,
 // so both the new application and any recovered original boot normally.
 func clearHelperEnv() {
-	for _, k := range []string{envHelperMode, envHelperTarget, envHelperNew, envHelperPID, envHelperLog, envHelperReady} {
+	for _, k := range []string{envHelperMode, envHelperTarget, envHelperNew, envHelperPID, envHelperLog, envHelperReady, envHelperFrom, envHelperApplyOnExit} {
 		_ = os.Unsetenv(k)
 	}
 }
@@ -461,8 +539,8 @@ func clearHelperEnv() {
 // errors
 
 var (
-	// ErrNotReady is returned by Restart when there is no installed update
-	// staged for launch.
+	// ErrNotReady is returned when there is no installed update staged for
+	// launch or application on exit.
 	ErrNotReady = errors.New("updater: nothing to restart into (call DownloadAndInstall first)")
 	// ErrHelperNotReady is returned when the replacement helper does not
 	// acknowledge that it reached helper mode before the application exits.

@@ -451,3 +451,30 @@ func TestRunHelperSwap_AllReplaceAttemptsFail_RelaunchesIntactOriginal(t *testin
 		t.Errorf("backup should be cleaned up after relaunch: %v", err)
 	}
 }
+
+func TestRunHelperSwap_ApplyOnExit_RestoresOnSwapFailure(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "app.bin")
+	newPath := filepath.Join(dir, "app.bin.new")
+	writeFile(t, target, []byte("OLD"))
+	writeFile(t, newPath, []byte("NEW"))
+	withSwapRetryDelay(t, time.Millisecond)
+	withRenameFunc(t, func(oldpath, newpath string) error {
+		if oldpath == newPath {
+			return errors.New("injected swap failure")
+		}
+		return os.Rename(oldpath, newpath)
+	})
+
+	l := &fakeLauncher{}
+	code := runHelperSwapMode(target, newPath, 0, filepath.Join(dir, "log"), instantWaiter, l, true)
+	if code != 13 {
+		t.Fatalf("code: %d (want 13)", code)
+	}
+	if got := readFile(t, target); string(got) != "OLD" {
+		t.Errorf("restored target contents: %q", got)
+	}
+	if len(l.calls) != 0 {
+		t.Errorf("launcher calls: %+v", l.calls)
+	}
+}
