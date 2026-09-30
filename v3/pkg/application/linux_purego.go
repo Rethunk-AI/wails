@@ -1332,3 +1332,6 @@ func widgetSetSizeRequest(widget pointer, width, height int) {
 func setWindowMaxSize(window pointer, maxWidth, maxHeight int) {
 	windowSetMaxSize(uintptr(window), maxWidth, maxHeight)
 }
+
+// setTransparent is left to the cgo backend, which has the CSS provider calls.
+func (w *linuxWebviewWindow) setTransparent() {}
