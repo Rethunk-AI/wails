@@ -69,6 +69,8 @@ The update is staged in a `wails-update-*` directory beside the installed binary
 
 Inside an AppImage the updater replaces and relaunches the `.AppImage` file named by `$APPIMAGE` rather than the read-only mount.
 
+The update is staged in a `wails-update-*` directory beside the installed binary, so the directory holding it must be writable. Inside an AppImage the updater replaces and relaunches the `.AppImage` file named by `$APPIMAGE` rather than the read-only mount.
+
 To run bookkeeping after an update, such as rewriting the version an installer registered with the operating system, set `Config.OnUpdateApplied`. `Init` calls it once, on the first launch after `Restart` replaced the application, with the version that was replaced.
 
 The default window reflects the current state automatically — for example, when `Check` returns no upgrade the user sees this and dismisses with **Close**:
