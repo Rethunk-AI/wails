@@ -60,6 +60,49 @@ func TestRunHelperSwap_HappyPath_File(t *testing.T) {
 	}
 }
 
+func TestRunHelperSwap_ApplyOnExit_NoLaunches(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "app.bin")
+	newPath := filepath.Join(dir, "app.bin.new")
+	writeFile(t, target, []byte("OLD"))
+	writeFile(t, newPath, []byte("NEW"))
+
+	l := &fakeLauncher{}
+	code := runHelperSwapMode(target, newPath, 0, filepath.Join(dir, "log"), instantWaiter, l, true)
+	if code != 0 {
+		t.Fatalf("code: %d", code)
+	}
+	if got := readFile(t, target); string(got) != "NEW" {
+		t.Errorf("target contents: %q", got)
+	}
+	if len(l.calls) != 0 {
+		t.Errorf("launcher calls: %+v", l.calls)
+	}
+}
+
+func TestRunHelperSwap_ApplyOnExit_RestoresOnSwapFailure(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "app.bin")
+	newPath := filepath.Join(dir, "app.bin.new")
+	writeFile(t, target, []byte("OLD"))
+	writeFile(t, newPath, []byte("NEW"))
+
+	wait := func(_ int, _ time.Duration) error {
+		return os.Remove(newPath)
+	}
+	l := &fakeLauncher{}
+	code := runHelperSwapMode(target, newPath, 1, filepath.Join(dir, "log"), wait, l, true)
+	if code != 13 {
+		t.Fatalf("code: %d (want 13)", code)
+	}
+	if got := readFile(t, target); string(got) != "OLD" {
+		t.Errorf("restored target contents: %q", got)
+	}
+	if len(l.calls) != 0 {
+		t.Errorf("launcher calls: %+v", l.calls)
+	}
+}
+
 // The downloaded artifact is created via os.Create which masks 0o666 against
 // umask — on Unix the executable bit isn't set, so a direct rename would
 // produce a non-runnable binary at target. The helper must restore the
@@ -218,13 +261,14 @@ func TestRunHelperSwap_ClearsHelperEnvBeforeLaunch(t *testing.T) {
 	t.Setenv(envHelperLog, filepath.Join(dir, "log"))
 	t.Setenv(envHelperReady, filepath.Join(dir, "ready"))
 	t.Setenv(envHelperFrom, "1.0.0")
+	t.Setenv(envHelperApplyOnExit, "1")
 
 	// envAtLaunch is captured by the launcher at the moment it would spawn the
 	// new binary — that's exactly the snapshot the inherited exec would see.
 	var envAtLaunch map[string]string
 	envCapturingLauncher := &funcLauncher{fn: func(path string) error {
 		envAtLaunch = map[string]string{}
-		for _, k := range []string{envHelperMode, envHelperTarget, envHelperNew, envHelperPID, envHelperLog, envHelperReady, envHelperFrom} {
+		for _, k := range []string{envHelperMode, envHelperTarget, envHelperNew, envHelperPID, envHelperLog, envHelperReady, envHelperFrom, envHelperApplyOnExit} {
 			envAtLaunch[k] = os.Getenv(k)
 		}
 		return nil
