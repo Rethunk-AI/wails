@@ -409,54 +409,6 @@ var webKitExecPathRewrites = []struct {
 		from: "/usr/libexec/webkit2gtk-3.0",
 		to:   "././libexec/webkit2gtk-3.0/",
 	},
-	{
-		from: "/usr/lib64/webkitgtk-6.0/injected-bundle/",
-		to:   "././/lib64/webkitgtk-6.0/injected-bundle/",
-	},
-	{
-		from: "/usr/lib/webkitgtk-6.0/injected-bundle/",
-		to:   "././/lib/webkitgtk-6.0/injected-bundle/",
-	},
-	{
-		from: "/usr/lib/x86_64-linux-gnu/webkitgtk-6.0/injected-bundle/",
-		to:   "././/lib/x86_64-linux-gnu/webkitgtk-6.0/injected-bundle/",
-	},
-	{
-		from: "/usr/lib/aarch64-linux-gnu/webkitgtk-6.0/injected-bundle/",
-		to:   "././/lib/aarch64-linux-gnu/webkitgtk-6.0/injected-bundle/",
-	},
-	{
-		from: "/usr/lib64/webkit2gtk-4.1/injected-bundle/",
-		to:   "././/lib64/webkit2gtk-4.1/injected-bundle/",
-	},
-	{
-		from: "/usr/lib/webkit2gtk-4.1/injected-bundle/",
-		to:   "././/lib/webkit2gtk-4.1/injected-bundle/",
-	},
-	{
-		from: "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/injected-bundle/",
-		to:   "././/lib/x86_64-linux-gnu/webkit2gtk-4.1/injected-bundle/",
-	},
-	{
-		from: "/usr/lib/aarch64-linux-gnu/webkit2gtk-4.1/injected-bundle/",
-		to:   "././/lib/aarch64-linux-gnu/webkit2gtk-4.1/injected-bundle/",
-	},
-	{
-		from: "/usr/lib64/webkit2gtk-4.0/injected-bundle/",
-		to:   "././/lib64/webkit2gtk-4.0/injected-bundle/",
-	},
-	{
-		from: "/usr/lib/webkit2gtk-4.0/injected-bundle/",
-		to:   "././/lib/webkit2gtk-4.0/injected-bundle/",
-	},
-	{
-		from: "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle/",
-		to:   "././/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle/",
-	},
-	{
-		from: "/usr/lib/aarch64-linux-gnu/webkit2gtk-4.0/injected-bundle/",
-		to:   "././/lib/aarch64-linux-gnu/webkit2gtk-4.0/injected-bundle/",
-	},
 }
 
 func rewriteWebKitExecPaths(data []byte) ([]byte, bool, error) {
