@@ -28,6 +28,7 @@ After processing, the content will be moved to the main changelog and this file 
 - Fix the updater failing to swap on Linux when the temp dir is on another filesystem (such as a tmpfs `/tmp`) by staging beside the installed binary and copying across filesystems
 - Fix the updater trying to replace the read-only mount of an AppImage instead of the `.AppImage` file
 - Fix service methods ignoring the application-wide `Options.MarshalError` when the service sets no `MarshalError` of its own, so their errors used the default marshaller
+- Fix Linux AppImages failing to start without WebKitGTK installed on the host by locating bundled WebKitGTK helper processes relative to the AppImage
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
@@ -40,19 +41,23 @@ After processing, the content will be moved to the main changelog and this file 
 
 ---
 
-### Example Entries:
+### Example Entries
 
 **Added:**
+
 - Add support for custom window icons in application options
 - Add new `SetWindowIcon()` method to runtime API (#1234)
 
 **Changed:**
+
 - Update minimum Go version requirement to 1.21
 - Improve error messages for invalid configuration files
 
 **Fixed:**
+
 - Fix memory leak in event system during window close operations (#5678)
 - Fix crash when using context menus on Linux with Wayland
 
 **Security:**
+
 - Update dependencies to address CVE-2024-12345 in third-party library
