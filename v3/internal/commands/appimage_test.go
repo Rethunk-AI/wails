@@ -163,3 +163,28 @@ func TestCopyGTKFilesSkipsFilesAlreadyInsideAppDir(t *testing.T) {
 		t.Fatalf("unexpected nested helper copy at %s", nestedCopy)
 	}
 }
+
+func TestCopyGTKFilesPreservesExecutableMode(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "test.AppDir")
+	source := filepath.Join(root, "source", "WebKitNetworkProcess")
+	if err := os.MkdirAll(filepath.Dir(source), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyGTKFiles(appDir, []string{source}); err != nil {
+		t.Fatal(err)
+	}
+
+	targetDir := filepath.Join(appDir, strings.TrimPrefix(filepath.Dir(source), string(os.PathSeparator)))
+	info, err := os.Stat(filepath.Join(targetDir, filepath.Base(source)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0755 {
+		t.Fatalf("copied helper mode = %o, want 0755", got)
+	}
+}
