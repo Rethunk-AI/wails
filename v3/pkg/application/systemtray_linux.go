@@ -719,9 +719,7 @@ func (s *linuxSystemTray) Event(id int32, eventID string, data dbus.Variant, tim
 			gtkDispatch(item.menuItem.handleClick)
 		}
 	case "opened":
-		if s.parent.clickHandler != nil {
-			s.parent.clickHandler()
-		}
+		// The host opens the menu for a right-click; that is not the left-click Activate the click handler is for.
 		if s.parent.onMenuOpen != nil {
 			s.parent.onMenuOpen()
 		}
@@ -741,7 +739,6 @@ func (s *linuxSystemTray) EventGroup(events []struct {
 	V3 uint32
 }) (idErrors []int32, err *dbus.Error) {
 	for _, event := range events {
-		fmt.Printf("EventGroup: %v, %v, %v, %v\n", event.V0, event.V1, event.V2, event.V3)
 		if event.V1 == "clicked" {
 			s.itemMapLock.RLock()
 			item, ok := s.itemMap[event.V0]
