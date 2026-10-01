@@ -4,6 +4,7 @@ package application
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -87,6 +88,7 @@ var (
 
 var (
 	registerURIScheme  sync.Once
+	appImageSandbox    sync.Once
 	fixSignalHandlers  sync.Once
 	framelessWindowCSS sync.Once
 )
@@ -1226,6 +1228,16 @@ func windowNew(application pointer, menu pointer, menuStyle LinuxMenuStyle, wind
 }
 
 func windowNewWebview(parentId uint, gpuPolicy WebviewGpuPolicy) pointer {
+	appImageSandbox.Do(func() {
+		appDir := os.Getenv("APPDIR")
+		if appDir == "" {
+			return
+		}
+		cAppDir := C.CString(appDir)
+		defer C.free(unsafe.Pointer(cAppDir))
+		C.webkit_web_context_add_path_to_sandbox(C.webkit_web_context_get_default(), cAppDir, C.gboolean(1))
+	})
+
 	c := NewCalloc()
 	defer c.Free()
 	manager := C.webkit_user_content_manager_new()
