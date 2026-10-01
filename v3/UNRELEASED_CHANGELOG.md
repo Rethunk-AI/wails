@@ -28,6 +28,7 @@ After processing, the content will be moved to the main changelog and this file 
 - Fix the updater failing to swap on Linux when the temp dir is on another filesystem (such as a tmpfs `/tmp`) by staging beside the installed binary and copying across filesystems
 - Fix the updater trying to replace the read-only mount of an AppImage instead of the `.AppImage` file
 - Fix Linux AppImages failing to start without WebKitGTK installed on the host by locating bundled WebKitGTK helper processes relative to the AppImage
+- Fix Linux AppImages failing to start without WebKitGTK installed on the host by locating only the matching bundled WebKitGTK helpers relative to the AppImage, preserving their executable modes, allowing the AppDir in WebKit's sandbox, and retaining the original working directory for single-instance launches
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
