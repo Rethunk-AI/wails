@@ -188,3 +188,17 @@ func TestCopyGTKFilesPreservesExecutableMode(t *testing.T) {
 		t.Fatalf("copied helper mode = %o, want 0755", got)
 	}
 }
+
+func TestRewriteWebKitInjectedBundlePath(t *testing.T) {
+	in := []byte("x\x00/usr/lib64/webkitgtk-6.0/injected-bundle/\x00y")
+	out, changed, err := rewriteWebKitExecPaths(in)
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if len(out) != len(in) {
+		t.Fatalf("length changed: %d -> %d", len(in), len(out))
+	}
+	if !strings.Contains(string(out), "././/lib64/webkitgtk-6.0/injected-bundle/") {
+		t.Fatalf("injected-bundle path not rewritten: %q", out)
+	}
+}
