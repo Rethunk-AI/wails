@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -142,6 +143,9 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 	}()
 
 	wg.Wait()
+	if err := installAppRun(appDir); err != nil {
+		return err
+	}
 
 	// Determine which GTK stack the binary links against by ldd'ing the
 	// source binary. We need this before searching for runtime files,
@@ -177,22 +181,12 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 		injectedBundle = "libwebkitgtkinjectedbundle.so"
 	}
 	filesNeeded := []string{"WebKitWebProcess", "WebKitNetworkProcess", injectedBundle}
-	files, err := findGTKFiles(filesNeeded)
+	files, err := findGTKFiles(filesNeeded, appDir)
 	if err != nil {
 		return err
 	}
-	s.CD(appDir)
-	for _, file := range files {
-		targetDir := filepath.Dir(file)
-		if targetDir[0] == '/' {
-			targetDir = targetDir[1:]
-		}
-		targetDir, err = filepath.Abs(targetDir)
-		if err != nil {
-			return err
-		}
-		s.MKDIR(targetDir)
-		s.COPY(file, targetDir)
+	if err := copyGTKFiles(appDir, files); err != nil {
+		return err
 	}
 
 	// Copy GTK Plugin
@@ -208,7 +202,7 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 	// Quote the executable and --appdir args so `s.EXEC`'s shlex split
 	// keeps them as single tokens when the user-supplied paths contain
 	// spaces.
-	cmd := fmt.Sprintf("%q --appimage-extract-and-run --appdir %q --output appimage --plugin gtk", linuxdeployAppImage, appDir)
+	cmd := fmt.Sprintf("%q --appimage-extract-and-run --appdir %q --plugin gtk", linuxdeployAppImage, appDir)
 	s.SETENV("DEPLOY_GTK_VERSION", DeployGtkVersion)
 
 	// Force linuxdeploy's appimage plugin to write the AppImage to a known
@@ -232,6 +226,16 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 		return err
 	}
 
+	if err := patchWebKitLibraries(appDir); err != nil {
+		return err
+	}
+
+	output, err = s.EXEC(fmt.Sprintf("%q --appimage-extract-and-run --appdir %q --output appimage", linuxdeployAppImage, appDir))
+	if err != nil {
+		fmt.Println(string(output))
+		return err
+	}
+
 	// Move file to output directory
 	s.MOVE(targetFile, options.OutputDir)
 
@@ -239,7 +243,7 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 	return nil
 }
 
-func findGTKFiles(files []string) ([]string, error) {
+func findGTKFiles(files []string, excludedDirs ...string) ([]string, error) {
 	notFound := []string{}
 	found := []string{}
 	err := filepath.Walk("/usr/", func(path string, info os.FileInfo, err error) error {
@@ -248,6 +252,15 @@ func findGTKFiles(files []string) ([]string, error) {
 				return nil
 			}
 			return err
+		}
+
+		for _, excludedDir := range excludedDirs {
+			if pathWithinDirectory(path, excludedDir) {
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 
 		if info.IsDir() {
@@ -282,6 +295,127 @@ func findGTKFiles(files []string) ([]string, error) {
 		return nil, errors.New("Unable to locate all required files: " + strings.Join(notFound, ", "))
 	}
 	return found, nil
+}
+
+func pathWithinDirectory(path, directory string) bool {
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absoluteDirectory, err := filepath.Abs(directory)
+	if err != nil {
+		return false
+	}
+	relativePath, err := filepath.Rel(absoluteDirectory, absolutePath)
+	if err != nil {
+		return false
+	}
+	return relativePath != ".." && !strings.HasPrefix(relativePath, ".."+string(filepath.Separator))
+}
+
+func copyGTKFiles(appDir string, files []string) error {
+	for _, file := range files {
+		if pathWithinDirectory(file, appDir) {
+			continue
+		}
+
+		targetDir := strings.TrimPrefix(filepath.Dir(file), string(filepath.Separator))
+		targetDir = filepath.Join(appDir, targetDir)
+		s.MKDIR(targetDir)
+		s.COPY(file, targetDir)
+	}
+	return nil
+}
+
+const appRun = `#!/bin/sh
+set -e
+
+APPDIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+OWD="${OWD:-$PWD}"
+export OWD
+cd "$APPDIR/usr"
+exec "$APPDIR/.wails-app-run" "$@"
+`
+
+func installAppRun(appDir string) error {
+	appRunPath := filepath.Join(appDir, "AppRun")
+	originalAppRunPath := filepath.Join(appDir, ".wails-app-run")
+	if err := os.Rename(appRunPath, originalAppRunPath); err != nil {
+		return err
+	}
+	return os.WriteFile(appRunPath, []byte(appRun), 0755)
+}
+
+var webKitExecPathRewrites = []struct {
+	from string
+	to   string
+}{
+	{
+		from: "/usr/libexec/webkitgtk-6.0",
+		to:   "././libexec/webkitgtk-6.0/",
+	},
+	{
+		from: "/usr/libexec/webkit2gtk-4.0",
+		to:   "././libexec/webkit2gtk-4.0/",
+	},
+	{
+		from: "/usr/libexec/webkit2gtk-3.0",
+		to:   "././libexec/webkit2gtk-3.0/",
+	},
+}
+
+func rewriteWebKitExecPaths(data []byte) ([]byte, bool, error) {
+	changed := false
+	for _, rewrite := range webKitExecPathRewrites {
+		if len(rewrite.from) != len(rewrite.to) {
+			return nil, false, fmt.Errorf("WebKit helper path rewrite changes length: %q -> %q", rewrite.from, rewrite.to)
+		}
+		if bytes.Contains(data, []byte(rewrite.from)) {
+			data = bytes.ReplaceAll(data, []byte(rewrite.from), []byte(rewrite.to))
+			changed = true
+		}
+	}
+	return data, changed, nil
+}
+
+func patchWebKitLibraries(appDir string) error {
+	patched := 0
+	err := filepath.Walk(filepath.Join(appDir, "usr"), func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || !info.Mode().IsRegular() {
+			return nil
+		}
+		name := filepath.Base(path)
+		if !strings.HasPrefix(name, "libwebkit") || !strings.Contains(name, ".so") {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rewritten, changed, err := rewriteWebKitExecPaths(data)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return nil
+		}
+		if err := os.WriteFile(path, rewritten, info.Mode().Perm()); err != nil {
+			return err
+		}
+		patched++
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if patched == 0 {
+		return errors.New("unable to locate a bundled WebKitGTK library with a known helper path")
+	}
+	return nil
 }
 
 // hasRelrDynSections checks if system libraries use .relr.dyn sections
