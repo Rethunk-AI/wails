@@ -208,6 +208,11 @@ func (m *singleInstanceManager) notifyFirstInstance() error {
 }
 
 func getCurrentWorkingDir() string {
+	if os.Getenv("APPDIR") != "" {
+		if originalWorkingDir := os.Getenv("OWD"); originalWorkingDir != "" {
+			return originalWorkingDir
+		}
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""

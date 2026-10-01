@@ -23,7 +23,7 @@ After processing, the content will be moved to the main changelog and this file 
 
 ## Fixed
 <!-- Bug fixes -->
-- Fix Linux AppImages failing to start without WebKitGTK installed on the host by locating bundled WebKitGTK helper processes relative to the AppImage
+- Fix Linux AppImages failing to start without WebKitGTK installed on the host by locating only the matching bundled WebKitGTK helpers relative to the AppImage, preserving their executable modes, allowing the AppDir in WebKit's sandbox, and retaining the original working directory for single-instance launches
 - Fix the `Permissions` option being ignored on macOS 12 and later: the `WKUIDelegate` media-capture method is now implemented, so `PermissionAllow` and `PermissionDeny` apply to camera and microphone requests as they do on Linux and Windows. `NSCameraUsageDescription` / `NSMicrophoneUsageDescription` and, where sandboxed, the matching device entitlements are still required
 
 ## Deprecated
