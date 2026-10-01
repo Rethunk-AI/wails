@@ -180,7 +180,15 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 	if DeployGtkVersion == "4" {
 		injectedBundle = "libwebkitgtkinjectedbundle.so"
 	}
-	filesNeeded := []string{"WebKitWebProcess", "WebKitNetworkProcess", injectedBundle}
+	webkitProcessDirectory := "webkitgtk-6.0"
+	if DeployGtkVersion == "3" {
+		webkitProcessDirectory = "webkit2gtk-4.1"
+	}
+	filesNeeded := []string{
+		filepath.Join(webkitProcessDirectory, "WebKitWebProcess"),
+		filepath.Join(webkitProcessDirectory, "WebKitNetworkProcess"),
+		injectedBundle,
+	}
 	files, err := findGTKFiles(filesNeeded, appDir)
 	if err != nil {
 		return err
@@ -246,38 +254,54 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 func findGTKFiles(files []string, excludedDirs ...string) ([]string, error) {
 	notFound := []string{}
 	found := []string{}
-	err := filepath.Walk("/usr/", func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			if os.IsPermission(err) {
-				return nil
+	searchRoots := []string{
+		"/usr/lib",
+		"/usr/lib64",
+		"/usr/lib/x86_64-linux-gnu",
+		"/usr/libexec",
+		"/usr/share",
+	}
+	for _, root := range searchRoots {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				if os.IsPermission(err) {
+					return nil
+				}
+				return err
 			}
-			return err
-		}
 
-		for _, excludedDir := range excludedDirs {
-			if pathWithinDirectory(path, excludedDir) {
+			if pathInsideAppDir(path) {
 				if info.IsDir() {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-		}
 
-		if info.IsDir() {
-			return nil
-		}
-
-		for _, fileName := range files {
-			if strings.HasSuffix(path, fileName) {
-				found = append(found, path)
-				break
+			for _, excludedDir := range excludedDirs {
+				if pathWithinDirectory(path, excludedDir) {
+					if info.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
 			}
-		}
 
-		return nil
-	})
-	if err != nil {
-		return nil, err
+			if info.IsDir() {
+				return nil
+			}
+
+			for _, fileName := range files {
+				if strings.HasSuffix(path, fileName) {
+					found = append(found, path)
+					break
+				}
+			}
+
+			return nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
 	}
 	for _, fileName := range files {
 		fileFound := false
@@ -295,6 +319,18 @@ func findGTKFiles(files []string, excludedDirs ...string) ([]string, error) {
 		return nil, errors.New("Unable to locate all required files: " + strings.Join(notFound, ", "))
 	}
 	return found, nil
+}
+
+func pathInsideAppDir(path string) bool {
+	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
+		if strings.HasSuffix(filepath.Base(current), ".AppDir") {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+	}
 }
 
 func pathWithinDirectory(path, directory string) bool {
@@ -319,10 +355,17 @@ func copyGTKFiles(appDir string, files []string) error {
 			continue
 		}
 
+		sourceInfo, err := os.Stat(file)
+		if err != nil {
+			return err
+		}
 		targetDir := strings.TrimPrefix(filepath.Dir(file), string(filepath.Separator))
 		targetDir = filepath.Join(appDir, targetDir)
 		s.MKDIR(targetDir)
 		s.COPY(file, targetDir)
+		if err := os.Chmod(filepath.Join(targetDir, filepath.Base(file)), sourceInfo.Mode().Perm()); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -357,6 +400,10 @@ var webKitExecPathRewrites = []struct {
 	{
 		from: "/usr/libexec/webkit2gtk-4.0",
 		to:   "././libexec/webkit2gtk-4.0/",
+	},
+	{
+		from: "/usr/libexec/webkit2gtk-4.1",
+		to:   "././libexec/webkit2gtk-4.1/",
 	},
 	{
 		from: "/usr/libexec/webkit2gtk-3.0",
