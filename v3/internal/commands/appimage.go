@@ -389,6 +389,10 @@ func installAppRun(appDir string) error {
 	return os.WriteFile(appRunPath, []byte(appRun), 0755)
 }
 
+// webKitExecPathRewrites only covers the helper executables WebKit spawns. The injected-bundle directory stays
+// absolute: WebKit hands it to bubblewrap as a bind-mount target, and bwrap cannot create a relative path inside
+// its read-only sandbox root, so rewriting it aborts the web process. WebKit only logs that the bundle is missing,
+// and Wails does not use web process extensions.
 var webKitExecPathRewrites = []struct {
 	from string
 	to   string
