@@ -401,6 +401,18 @@ func (u *Updater) CheckAndInstall(ctx context.Context) error {
 // dispatched. The caller's process will exit asynchronously as the host's
 // normal shutdown unwinds.
 func (u *Updater) Restart(_ context.Context) error {
+	return u.startHelper(false)
+}
+
+// ApplyOnExit stages the update for the application's normal shutdown. Use
+// this when the user is quitting rather than asking the application to
+// restart into the new version; unlike Restart, it does not relaunch the
+// application or call Host.Quit.
+func (u *Updater) ApplyOnExit(_ context.Context) error {
+	return u.startHelper(true)
+}
+
+func (u *Updater) startHelper(applyOnExit bool) error {
 	u.mu.RLock()
 	staged := u.resolved
 	current := u.current
@@ -434,6 +446,9 @@ func (u *Updater) Restart(_ context.Context) error {
 		envHelperReady+"="+readyPath,
 		envHelperFrom+"="+current,
 	)
+	if applyOnExit {
+		env = append(env, envHelperApplyOnExit+"=1")
+	}
 
 	cmd := newDetachedCommand(self)
 	cmd.Env = env
@@ -446,10 +461,12 @@ func (u *Updater) Restart(_ context.Context) error {
 		return err
 	}
 	_ = cmd.Process.Release()
-	// The helper has acknowledged helper mode and is now blocking on
-	// waitForPID(os.Getpid()). Hand off to the host's shutdown sequence so the
-	// wait completes and the swap proceeds.
-	u.host.Quit()
+	if !applyOnExit {
+		// The helper has acknowledged helper mode and is now blocking on
+		// waitForPID(os.Getpid()). Hand off to the host's shutdown sequence so
+		// the wait completes and the swap proceeds.
+		u.host.Quit()
+	}
 	return nil
 }
 
