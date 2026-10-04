@@ -83,28 +83,40 @@ func Test_generateAppImage(t *testing.T) {
 }
 
 func TestRewriteWebKitExecPaths(t *testing.T) {
-	for _, rewrite := range webKitExecPathRewrites {
-		if len(rewrite.from) != len(rewrite.to) {
-			t.Fatalf("rewrite changes length: %q -> %q", rewrite.from, rewrite.to)
-		}
-
-		input := []byte("prefix\x00" + rewrite.from + "\x00suffix")
-		output, changed, err := rewriteWebKitExecPaths(input)
+	for _, tc := range []struct{ dir, want string }{
+		{"/usr/libexec/webkitgtk-6.0", "././libexec/webkitgtk-6.0/"},
+		{"/usr/lib/x86_64-linux-gnu/webkitgtk-6.0", "././lib/x86_64-linux-gnu/webkitgtk-6.0/"},
+		{"/usr/lib/aarch64-linux-gnu/webkit2gtk-4.1", "././lib/aarch64-linux-gnu/webkit2gtk-4.1/"},
+	} {
+		bundle := "\x00" + tc.dir + "/injected-bundle/\x00"
+		input := []byte("prefix\x00" + tc.dir + bundle + "suffix")
+		output, changed, err := rewriteWebKitExecPaths(input, []string{tc.dir})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !changed {
-			t.Fatalf("rewrite %q was not applied", rewrite.from)
+		if !changed || !bytes.Contains(output, []byte("\x00"+tc.want+"\x00")) {
+			t.Fatalf("%s: helper path not rewritten to %q: %q", tc.dir, tc.want, output)
 		}
-		if !bytes.Contains(output, []byte(rewrite.to)) {
-			t.Fatalf("rewritten data does not contain %q", rewrite.to)
-		}
-		if bytes.Contains(output, []byte(rewrite.from)) {
-			t.Fatalf("rewritten data still contains %q", rewrite.from)
+		if !bytes.Contains(output, []byte(bundle)) {
+			t.Fatalf("%s: injected-bundle path changed: %q", tc.dir, output)
 		}
 		if len(output) != len(input) {
-			t.Fatalf("rewrite changed file length from %d to %d", len(input), len(output))
+			t.Fatalf("%s: rewrite changed file length from %d to %d", tc.dir, len(input), len(output))
 		}
+	}
+	if _, _, err := rewriteWebKitExecPaths(nil, []string{"/opt/webkit"}); err == nil {
+		t.Fatal("a helper directory outside /usr was accepted")
+	}
+}
+
+func TestWebKitHelperDirs(t *testing.T) {
+	got := webKitHelperDirs([]string{
+		"/usr/lib/x86_64-linux-gnu/webkitgtk-6.0/WebKitWebProcess",
+		"/usr/lib/x86_64-linux-gnu/webkitgtk-6.0/WebKitNetworkProcess",
+		"/usr/lib/x86_64-linux-gnu/libwebkitgtkinjectedbundle.so",
+	})
+	if len(got) != 1 || got[0] != "/usr/lib/x86_64-linux-gnu/webkitgtk-6.0" {
+		t.Fatalf("helper dirs %q", got)
 	}
 }
 
