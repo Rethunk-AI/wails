@@ -42,3 +42,24 @@ func TestMOVE_CrossDevice(t *testing.T) {
 		t.Errorf("source still present: %v", err)
 	}
 }
+
+func TestCOPY_KeepsMode(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "app")
+	if err := os.WriteFile(src, []byte("elf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "bin")
+	if err := os.Mkdir(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	COPY(src, dst)
+
+	got, err := os.Stat(filepath.Join(dst, "app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode().Perm() != 0o755 {
+		t.Errorf("mode = %v, want 0755", got.Mode().Perm())
+	}
+}

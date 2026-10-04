@@ -215,16 +215,10 @@ func SYMLINK(source string, target string) {
 // COPY file from source to target
 func COPY(source string, target string) {
 	log("COPY %s -> %s", source, target)
-	src, err := os.Open(source)
-	checkError(err)
-	defer closefile(src)
 	if ISDIR(target) {
 		target = filepath.Join(target, filepath.Base(source))
 	}
-	d, err := os.Create(target)
-	checkError(err)
-	_, err = io.Copy(d, src)
-	checkError(err)
+	checkError(copyFile(source, target))
 }
 
 // Move file from source to target
@@ -236,15 +230,16 @@ func MOVE(source string, target string) {
 	log("MOVE %s -> %s", source, target)
 	err := os.Rename(source, target)
 	if errors.Is(err, syscall.EXDEV) {
-		err = copyAcrossDevices(source, target)
+		if err = copyFile(source, target); err == nil {
+			err = os.Remove(source)
+		}
 	}
 	checkError(err)
 }
 
-// copyAcrossDevices moves a regular file when rename cannot, e.g. from a tmpfs
-// build dir to an on-disk output dir. The file mode is kept so an AppImage
-// stays executable.
-func copyAcrossDevices(source, target string) error {
+// copyFile copies a regular file and keeps its mode, so binaries stay
+// executable. A partial target is removed on failure.
+func copyFile(source, target string) error {
 	src, err := os.Open(source)
 	if err != nil {
 		return err
@@ -267,9 +262,8 @@ func copyAcrossDevices(source, target string) error {
 	}
 	if err != nil {
 		_ = os.Remove(target)
-		return err
 	}
-	return os.Remove(source)
+	return err
 }
 
 func CWD() string {
