@@ -5,12 +5,14 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	"github.com/wailsapp/wails/v3/internal/term"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
+
+	"github.com/wailsapp/wails/v3/internal/term"
 
 	"github.com/pterm/pterm"
 	"github.com/wailsapp/wails/v3/internal/s"
@@ -234,7 +236,7 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 		return err
 	}
 
-	if err := patchWebKitLibraries(appDir); err != nil {
+	if err := patchWebKitLibraries(appDir, webKitHelperDirs(files)); err != nil {
 		return err
 	}
 
@@ -349,6 +351,17 @@ func pathWithinDirectory(path, directory string) bool {
 	return relativePath != ".." && !strings.HasPrefix(relativePath, ".."+string(filepath.Separator))
 }
 
+// webKitHelperDirs is each directory a found WebKitWebProcess sits in, the path WebKit was built to spawn helpers from.
+func webKitHelperDirs(files []string) []string {
+	var dirs []string
+	for _, file := range files {
+		if filepath.Base(file) == "WebKitWebProcess" && !slices.Contains(dirs, filepath.Dir(file)) {
+			dirs = append(dirs, filepath.Dir(file))
+		}
+	}
+	return dirs
+}
+
 func copyGTKFiles(appDir string, files []string) error {
 	for _, file := range files {
 		if pathWithinDirectory(file, appDir) {
@@ -389,47 +402,36 @@ func installAppRun(appDir string) error {
 	return os.WriteFile(appRunPath, []byte(appRun), 0755)
 }
 
-// webKitExecPathRewrites only covers the helper executables WebKit spawns. The injected-bundle directory stays
-// absolute: WebKit hands it to bubblewrap as a bind-mount target, and bwrap cannot create a relative path inside
-// its read-only sandbox root, so rewriting it aborts the web process. WebKit only logs that the bundle is missing,
-// and Wails does not use web process extensions.
-var webKitExecPathRewrites = []struct {
-	from string
-	to   string
-}{
-	{
-		from: "/usr/libexec/webkitgtk-6.0",
-		to:   "././libexec/webkitgtk-6.0/",
-	},
-	{
-		from: "/usr/libexec/webkit2gtk-4.0",
-		to:   "././libexec/webkit2gtk-4.0/",
-	},
-	{
-		from: "/usr/libexec/webkit2gtk-4.1",
-		to:   "././libexec/webkit2gtk-4.1/",
-	},
-	{
-		from: "/usr/libexec/webkit2gtk-3.0",
-		to:   "././libexec/webkit2gtk-3.0/",
-	},
+// webKitExecPathRewrite turns the absolute directory WebKit was built to spawn its helpers from into a path relative to
+// $APPDIR/usr, where AppRun starts the app, padded to the same length so the library can be patched in place. Only the
+// whole NUL-terminated string is rewritten: the injected-bundle directory shares its prefix on Debian-family systems and
+// stays absolute, since WebKit hands it to bubblewrap as a bind-mount target and bwrap cannot create a relative path
+// inside its read-only sandbox root. WebKit only logs that the bundle is missing, and Wails does not use web process
+// extensions.
+func webKitExecPathRewrite(helperDir string) (from, to []byte, err error) {
+	rest, ok := strings.CutPrefix(helperDir, "/usr/")
+	if !ok {
+		return nil, nil, fmt.Errorf("WebKit helper directory %q is outside /usr", helperDir)
+	}
+	return []byte(helperDir + "\x00"), []byte("././" + rest + "/\x00"), nil
 }
 
-func rewriteWebKitExecPaths(data []byte) ([]byte, bool, error) {
+func rewriteWebKitExecPaths(data []byte, helperDirs []string) ([]byte, bool, error) {
 	changed := false
-	for _, rewrite := range webKitExecPathRewrites {
-		if len(rewrite.from) != len(rewrite.to) {
-			return nil, false, fmt.Errorf("WebKit helper path rewrite changes length: %q -> %q", rewrite.from, rewrite.to)
+	for _, dir := range helperDirs {
+		from, to, err := webKitExecPathRewrite(dir)
+		if err != nil {
+			return nil, false, err
 		}
-		if bytes.Contains(data, []byte(rewrite.from)) {
-			data = bytes.ReplaceAll(data, []byte(rewrite.from), []byte(rewrite.to))
+		if bytes.Contains(data, from) {
+			data = bytes.ReplaceAll(data, from, to)
 			changed = true
 		}
 	}
 	return data, changed, nil
 }
 
-func patchWebKitLibraries(appDir string) error {
+func patchWebKitLibraries(appDir string, helperDirs []string) error {
 	patched := 0
 	err := filepath.Walk(filepath.Join(appDir, "usr"), func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -447,7 +449,7 @@ func patchWebKitLibraries(appDir string) error {
 		if err != nil {
 			return err
 		}
-		rewritten, changed, err := rewriteWebKitExecPaths(data)
+		rewritten, changed, err := rewriteWebKitExecPaths(data, helperDirs)
 		if err != nil {
 			return err
 		}
@@ -464,7 +466,7 @@ func patchWebKitLibraries(appDir string) error {
 		return err
 	}
 	if patched == 0 {
-		return errors.New("unable to locate a bundled WebKitGTK library with a known helper path")
+		return fmt.Errorf("no bundled WebKitGTK library names the helper directories %q", helperDirs)
 	}
 	return nil
 }
