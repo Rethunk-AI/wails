@@ -44,6 +44,9 @@ After processing, the content will be moved to the main changelog and this file 
 - Fix `OpenFile()` on Windows ignoring `PromptForMultipleSelection()` when `CanChooseDirectories(true)`: users can now pick several folders at once, as on macOS and Linux (#6263)
 - Fix by-value `double` arguments to WebView2 COM methods on windows/arm64 — `ZoomFactor`, `RasterizationScale`, cookie `Expires`, and the print settings scale, page size and margins were affected there (the print-settings setters previously returned `ErrDoubleArgUnsupported`): affected calls now goes through a `runtime.cgocall` trampoline that loads `d0`, which Go's syscall path cannot (golang.org/issue/62583) by @APshenkin
 - Fix service methods ignoring the application-wide `Options.MarshalError` when the service sets no `MarshalError` of its own, so their errors used the default marshaller
+- Fix Linux AppImages failing to start without WebKitGTK installed on the host by locating bundled WebKitGTK helper processes relative to the AppImage
+- Fix Linux AppImages failing to start without WebKitGTK installed on the host by locating only the matching bundled WebKitGTK helpers relative to the AppImage, preserving their executable modes, allowing the AppDir in WebKit's sandbox, and retaining the original working directory for single-instance launches
+- Fix a second instance launched while the first is quitting handing its launch to the exiting app on Linux, by releasing the single-instance D-Bus name at the start of shutdown
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
