@@ -27,6 +27,7 @@ After processing, the content will be moved to the main changelog and this file 
 - Fix transparent and translucent windows rendering opaque on Linux with GTK4 by clearing the GTK window background, as GTK3 already does
 - Fix the updater failing to swap on Linux when the temp dir is on another filesystem (such as a tmpfs `/tmp`) by staging beside the installed binary and copying across filesystems
 - Fix the updater trying to replace the read-only mount of an AppImage instead of the `.AppImage` file
+- Fix service methods ignoring the application-wide `Options.MarshalError` when the service sets no `MarshalError` of its own, so their errors used the default marshaller
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
