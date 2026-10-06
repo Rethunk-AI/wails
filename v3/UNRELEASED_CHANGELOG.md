@@ -21,7 +21,6 @@ follow the changelog ownership policy in AGENTS.md and preserve existing entries
 
 ## Fixed
 <!-- Bug fixes -->
-- Fix a second instance launched while the first is quitting handing its launch to the exiting app on Linux, by releasing the single-instance D-Bus name at the start of shutdown
 
 ## Deprecated
 <!-- Soon-to-be removed features -->
