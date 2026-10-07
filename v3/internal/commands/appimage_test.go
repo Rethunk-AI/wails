@@ -84,9 +84,9 @@ func Test_generateAppImage(t *testing.T) {
 
 func TestRewriteWebKitExecPaths(t *testing.T) {
 	for _, tc := range []struct{ dir, want string }{
-		{"/usr/libexec/webkitgtk-6.0", "././libexec/webkitgtk-6.0/"},
-		{"/usr/lib/x86_64-linux-gnu/webkitgtk-6.0", "././lib/x86_64-linux-gnu/webkitgtk-6.0/"},
-		{"/usr/lib/aarch64-linux-gnu/webkit2gtk-4.1", "././lib/aarch64-linux-gnu/webkit2gtk-4.1/"},
+		{"/usr/libexec/webkitgtk-6.0", "././webkitgtk-6.0/"},
+		{"/usr/lib/x86_64-linux-gnu/webkitgtk-6.0", "././webkitgtk-6.0/"},
+		{"/usr/lib/aarch64-linux-gnu/webkit2gtk-4.1", "././webkit2gtk-4.1/"},
 	} {
 		bundle := "\x00" + tc.dir + "/injected-bundle/\x00"
 		input := []byte("prefix\x00" + tc.dir + bundle + "suffix")
@@ -106,6 +106,31 @@ func TestRewriteWebKitExecPaths(t *testing.T) {
 	}
 	if _, _, err := rewriteWebKitExecPaths(nil, []string{"/opt/webkit"}); err == nil {
 		t.Fatal("a helper directory outside /usr was accepted")
+	}
+}
+
+func TestPatchWebKitLibrariesMovesHelpers(t *testing.T) {
+	appDir := t.TempDir()
+	dir := "/usr/lib/x86_64-linux-gnu/webkitgtk-6.0"
+	if err := os.MkdirAll(filepath.Join(appDir, dir), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, dir, "WebKitWebProcess"), nil, 0755); err != nil {
+		t.Fatal(err)
+	}
+	lib := filepath.Join(appDir, "usr/lib/libwebkitgtk-6.0.so.4")
+	if err := os.WriteFile(lib, []byte("a\x00"+dir+"\x00b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := patchWebKitLibraries(appDir, []string{dir}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(appDir, "usr/lib/webkitgtk-6.0/WebKitWebProcess")); err != nil {
+		t.Fatalf("helpers not moved: %v", err)
+	}
+	got, _ := os.ReadFile(lib)
+	if !bytes.Contains(got, []byte("\x00././webkitgtk-6.0/\x00")) {
+		t.Fatalf("library not patched: %q", got)
 	}
 }
 
@@ -140,7 +165,7 @@ func TestInstallAppRun(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`OWD="${OWD:-$PWD}"`,
-		`cd "$APPDIR/usr"`,
+		`cd "$APPDIR/usr/lib"`,
 		`exec "$APPDIR/.wails-app-run" "$@"`,
 	} {
 		if !strings.Contains(string(wrapper), expected) {

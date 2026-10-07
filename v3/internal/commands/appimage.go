@@ -417,7 +417,7 @@ set -e
 APPDIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 OWD="${OWD:-$PWD}"
 export OWD
-cd "$APPDIR/usr"
+cd "$APPDIR/usr/lib"
 exec "$APPDIR/.wails-app-run" "$@"
 `
 
@@ -430,18 +430,25 @@ func installAppRun(appDir string) error {
 	return os.WriteFile(appRunPath, []byte(appRun), 0755)
 }
 
-// webKitExecPathRewrite turns the absolute directory WebKit was built to spawn its helpers from into a path relative to
-// $APPDIR/usr, where AppRun starts the app, padded to the same length so the library can be patched in place. Only the
-// whole NUL-terminated string is rewritten: the injected-bundle directory shares its prefix on Debian-family systems and
-// stays absolute, since WebKit hands it to bubblewrap as a bind-mount target and bwrap cannot create a relative path
-// inside its read-only sandbox root. WebKit only logs that the bundle is missing, and Wails does not use web process
-// extensions.
+// webKitLibDir is where the helper directory is moved to inside the AppDir, so the rewritten path can name it directly.
+const webKitLibDir = "usr/lib"
+
+// webKitExecPathRewrite turns the absolute directory WebKit was built to spawn its helpers from into "././<dir name>/",
+// padded with NULs to the same length so the library can be patched in place. WebKit hands that string to bubblewrap
+// both as a bind destination, resolved against the sandbox root, and as the exec path, resolved against the working
+// directory. A top-level destination can be created in the read-only sandbox root where a nested one under /lib cannot,
+// and AppRun starts the app in $APPDIR/usr/lib, which WebKit binds at the same absolute path, so the exec path resolves
+// there. Only the whole NUL-terminated string is rewritten: the injected-bundle directory shares its prefix on
+// Debian-family systems and stays absolute. WebKit only logs that the bundle is missing, and Wails does not use web
+// process extensions.
 func webKitExecPathRewrite(helperDir string) (from, to []byte, err error) {
-	rest, ok := strings.CutPrefix(helperDir, "/usr/")
-	if !ok {
+	if _, ok := strings.CutPrefix(helperDir, "/usr/"); !ok {
 		return nil, nil, fmt.Errorf("WebKit helper directory %q is outside /usr", helperDir)
 	}
-	return []byte(helperDir + "\x00"), []byte("././" + rest + "/\x00"), nil
+	from = []byte(helperDir + "\x00")
+	to = []byte("././" + filepath.Base(helperDir) + "/")
+	to = append(to, make([]byte, len(from)-len(to))...)
+	return from, to, nil
 }
 
 func rewriteWebKitExecPaths(data []byte, helperDirs []string) ([]byte, bool, error) {
@@ -460,6 +467,19 @@ func rewriteWebKitExecPaths(data []byte, helperDirs []string) ([]byte, bool, err
 }
 
 func patchWebKitLibraries(appDir string, helperDirs []string) error {
+	for _, dir := range helperDirs {
+		if _, _, err := webKitExecPathRewrite(dir); err != nil {
+			return err
+		}
+		from := filepath.Join(appDir, dir)
+		to := filepath.Join(appDir, webKitLibDir, filepath.Base(dir))
+		if from == to {
+			continue
+		}
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
+	}
 	patched := 0
 	err := filepath.Walk(filepath.Join(appDir, "usr"), func(path string, info os.FileInfo, err error) error {
 		if err != nil {
