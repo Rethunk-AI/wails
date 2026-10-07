@@ -146,16 +146,8 @@ func TestWebKitHelperDirs(t *testing.T) {
 }
 
 func TestInstallAppRun(t *testing.T) {
-	appDir := filepath.Join(t.TempDir(), "test.AppDir")
-	if err := os.MkdirAll(filepath.Join(appDir, "usr"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	original := []byte("#!/bin/sh\nexec \"$APPDIR/usr/bin/testapp\" \"$@\"\n")
-	if err := os.WriteFile(filepath.Join(appDir, "AppRun"), original, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := installAppRun(appDir); err != nil {
+	appDir := t.TempDir()
+	if err := installAppRun(appDir, "testapp"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -165,19 +157,16 @@ func TestInstallAppRun(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`OWD="${OWD:-$PWD}"`,
-		`cd "$APPDIR/usr/lib"`,
-		`exec "$APPDIR/.wails-app-run" "$@"`,
+		`export PATH="$usr/bin:$PATH"`,
+		`export LD_LIBRARY_PATH="$usr/lib:`,
+		`export XDG_DATA_DIRS="$usr/share:`,
+		`export GSETTINGS_SCHEMA_DIR="$usr/share/glib-2.0/schemas"`,
+		`cd "$usr/lib"`,
+		`exec "$usr/bin/testapp" "$@"`,
 	} {
 		if !strings.Contains(string(wrapper), expected) {
 			t.Errorf("AppRun does not contain %q", expected)
 		}
-	}
-	gotOriginal, err := os.ReadFile(filepath.Join(appDir, ".wails-app-run"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(gotOriginal, original) {
-		t.Fatalf("original AppRun changed: got %q, want %q", gotOriginal, original)
 	}
 }
 

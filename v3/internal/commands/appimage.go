@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/wailsapp/wails/v3/internal/term"
 
@@ -33,7 +32,6 @@ type GenerateAppImageOptions struct {
 	DesktopFile string `description:"Path to the desktop file"`
 	OutputDir   string `description:"Path to the output directory" default:"."`
 	BuildDir    string `description:"Path to the build directory"`
-	AppRun      string `description:"Path to an AppRun file to use instead of downloading one (env WAILS_APPIMAGE_APPRUN)"`
 	LinuxDeploy string `description:"Path to a linuxdeploy executable to use instead of downloading one (env WAILS_APPIMAGE_LINUXDEPLOY)"`
 	NoPack      bool   `description:"Prepare the AppDir but do not pack it into an AppImage"`
 }
@@ -129,10 +127,6 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 	// Download linuxdeploy and make it executable
 	s.CD(options.BuildDir)
 
-	appRunSrc, err := toolPath(options.AppRun, "WAILS_APPIMAGE_APPRUN")
-	if err != nil {
-		return err
-	}
 	linuxdeployPath, err := toolPath(options.LinuxDeploy, "WAILS_APPIMAGE_LINUXDEPLOY")
 	if err != nil {
 		return err
@@ -144,31 +138,11 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 
 	// Download only the tools the caller did not supply
 	log(p, "Preparing AppImage tooling")
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		if !linuxdeploySupplied && !s.EXISTS(linuxdeployPath) {
-			s.DOWNLOAD(fmt.Sprintf("https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-%s.AppImage", arch), linuxdeployPath)
-		}
-		s.CHMOD(linuxdeployPath, 0755)
-	}()
-
-	go func() {
-		defer wg.Done()
-		target := filepath.Join(appDir, "AppRun")
-		switch {
-		case appRunSrc != "":
-			s.COPY(appRunSrc, target)
-		case !s.EXISTS(target):
-			s.DOWNLOAD(fmt.Sprintf("https://github.com/AppImage/AppImageKit/releases/download/continuous/AppRun-%s", arch), target)
-		}
-		s.CHMOD(target, 0755)
-	}()
-
-	wg.Wait()
-	if err := installAppRun(appDir); err != nil {
+	if !linuxdeploySupplied && !s.EXISTS(linuxdeployPath) {
+		s.DOWNLOAD(fmt.Sprintf("https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-%s.AppImage", arch), linuxdeployPath)
+	}
+	s.CHMOD(linuxdeployPath, 0755)
+	if err := installAppRun(appDir, filepath.Base(options.Binary)); err != nil {
 		return err
 	}
 
@@ -411,23 +385,25 @@ func copyGTKFiles(appDir string, files []string) error {
 	return nil
 }
 
+// appRun replaces AppImageKit's AppRun binary, which chdirs to $APPDIR/usr before exec'ing the app. WebKit's rewritten
+// helper path is relative to $APPDIR/usr/lib, so the app must start there. The environment below is what that binary sets.
 const appRun = `#!/bin/sh
 set -e
 
 APPDIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 OWD="${OWD:-$PWD}"
 export OWD
-cd "$APPDIR/usr/lib"
-exec "$APPDIR/.wails-app-run" "$@"
+usr="$APPDIR/usr"
+export PATH="$usr/bin:$PATH"
+export LD_LIBRARY_PATH="$usr/lib:$usr/lib/x86_64-linux-gnu:$usr/lib/aarch64-linux-gnu:$usr/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export XDG_DATA_DIRS="$usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export GSETTINGS_SCHEMA_DIR="$usr/share/glib-2.0/schemas"
+cd "$usr/lib"
+exec "$usr/bin/%s" "$@"
 `
 
-func installAppRun(appDir string) error {
-	appRunPath := filepath.Join(appDir, "AppRun")
-	originalAppRunPath := filepath.Join(appDir, ".wails-app-run")
-	if err := os.Rename(appRunPath, originalAppRunPath); err != nil {
-		return err
-	}
-	return os.WriteFile(appRunPath, []byte(appRun), 0755)
+func installAppRun(appDir, binary string) error {
+	return os.WriteFile(filepath.Join(appDir, "AppRun"), []byte(fmt.Sprintf(appRun, binary)), 0755)
 }
 
 // webKitLibDir is where the helper directory is moved to inside the AppDir, so the rewritten path can name it directly.
