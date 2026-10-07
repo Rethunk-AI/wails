@@ -33,6 +33,20 @@ type GenerateAppImageOptions struct {
 	DesktopFile string `description:"Path to the desktop file"`
 	OutputDir   string `description:"Path to the output directory" default:"."`
 	BuildDir    string `description:"Path to the build directory"`
+	AppRun      string `description:"Path to an AppRun file to use instead of downloading one (env WAILS_APPIMAGE_APPRUN)"`
+	LinuxDeploy string `description:"Path to a linuxdeploy executable to use instead of downloading one (env WAILS_APPIMAGE_LINUXDEPLOY)"`
+	NoPack      bool   `description:"Prepare the AppDir but do not pack it into an AppImage"`
+}
+
+// toolPath is the explicit flag value, else the environment variable, made absolute. Empty means download.
+func toolPath(flag, env string) (string, error) {
+	if flag == "" {
+		flag = os.Getenv(env)
+	}
+	if flag == "" {
+		return "", nil
+	}
+	return filepath.Abs(flag)
 }
 
 func GenerateAppImage(options *GenerateAppImageOptions) error {
@@ -115,33 +129,42 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 	// Download linuxdeploy and make it executable
 	s.CD(options.BuildDir)
 
-	// Download URLs using a map based on architecture
-	urls := map[string]string{
-		"linuxdeploy": fmt.Sprintf("https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-%s.AppImage", arch),
-		"AppRun":      fmt.Sprintf("https://github.com/AppImage/AppImageKit/releases/download/continuous/AppRun-%s", arch),
+	appRunSrc, err := toolPath(options.AppRun, "WAILS_APPIMAGE_APPRUN")
+	if err != nil {
+		return err
+	}
+	linuxdeployPath, err := toolPath(options.LinuxDeploy, "WAILS_APPIMAGE_LINUXDEPLOY")
+	if err != nil {
+		return err
+	}
+	linuxdeploySupplied := linuxdeployPath != ""
+	if !linuxdeploySupplied {
+		linuxdeployPath = filepath.Join(options.BuildDir, fmt.Sprintf("linuxdeploy-%s.AppImage", arch))
 	}
 
-	// Download necessary files concurrently
-	log(p, "Downloading AppImage tooling")
+	// Download only the tools the caller did not supply
+	log(p, "Preparing AppImage tooling")
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
-		linuxdeployPath := filepath.Join(options.BuildDir, filepath.Base(urls["linuxdeploy"]))
-		if !s.EXISTS(linuxdeployPath) {
-			s.DOWNLOAD(urls["linuxdeploy"], linuxdeployPath)
+		defer wg.Done()
+		if !linuxdeploySupplied && !s.EXISTS(linuxdeployPath) {
+			s.DOWNLOAD(fmt.Sprintf("https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-%s.AppImage", arch), linuxdeployPath)
 		}
 		s.CHMOD(linuxdeployPath, 0755)
-		wg.Done()
 	}()
 
 	go func() {
+		defer wg.Done()
 		target := filepath.Join(appDir, "AppRun")
-		if !s.EXISTS(target) {
-			s.DOWNLOAD(urls["AppRun"], target)
+		switch {
+		case appRunSrc != "":
+			s.COPY(appRunSrc, target)
+		case !s.EXISTS(target):
+			s.DOWNLOAD(fmt.Sprintf("https://github.com/AppImage/AppImageKit/releases/download/continuous/AppRun-%s", arch), target)
 		}
 		s.CHMOD(target, 0755)
-		wg.Done()
 	}()
 
 	wg.Wait()
@@ -207,7 +230,7 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 
 	// Run linuxdeploy to bundle the application
 	s.CD(options.BuildDir)
-	linuxdeployAppImage := filepath.Join(options.BuildDir, fmt.Sprintf("linuxdeploy-%s.AppImage", arch))
+	linuxdeployAppImage := linuxdeployPath
 
 	// Quote the executable and --appdir args so `s.EXEC`'s shlex split
 	// keeps them as single tokens when the user-supplied paths contain
@@ -238,6 +261,11 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 
 	if err := patchWebKitLibraries(appDir, webKitHelperDirs(files)); err != nil {
 		return err
+	}
+
+	if options.NoPack {
+		log(p, "AppDir prepared: "+appDir)
+		return nil
 	}
 
 	output, err = s.EXEC(fmt.Sprintf("%q --appimage-extract-and-run --appdir %q --output appimage", linuxdeployAppImage, appDir))
