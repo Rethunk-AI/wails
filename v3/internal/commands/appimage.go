@@ -31,6 +31,18 @@ type GenerateAppImageOptions struct {
 	DesktopFile string `description:"Path to the desktop file"`
 	OutputDir   string `description:"Path to the output directory" default:"."`
 	BuildDir    string `description:"Path to the build directory"`
+	LinuxDeploy string `description:"Path to a linuxdeploy executable to use instead of downloading one (env WAILS_APPIMAGE_LINUXDEPLOY)"`
+}
+
+// toolPath is the explicit flag value, else the environment variable, made absolute. Empty means download.
+func toolPath(flag, env string) (string, error) {
+	if flag == "" {
+		flag = os.Getenv(env)
+	}
+	if flag == "" {
+		return "", nil
+	}
+	return filepath.Abs(flag)
 }
 
 func GenerateAppImage(options *GenerateAppImageOptions) error {
@@ -113,9 +125,16 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 	// Download linuxdeploy and make it executable
 	s.CD(options.BuildDir)
 
-	linuxdeployPath := filepath.Join(options.BuildDir, fmt.Sprintf("linuxdeploy-%s.AppImage", arch))
+	linuxdeployPath, err := toolPath(options.LinuxDeploy, "WAILS_APPIMAGE_LINUXDEPLOY")
+	if err != nil {
+		return err
+	}
+	linuxdeploySupplied := linuxdeployPath != ""
+	if !linuxdeploySupplied {
+		linuxdeployPath = filepath.Join(options.BuildDir, fmt.Sprintf("linuxdeploy-%s.AppImage", arch))
+	}
 	log(p, "Downloading AppImage tooling")
-	if !s.EXISTS(linuxdeployPath) {
+	if !linuxdeploySupplied && !s.EXISTS(linuxdeployPath) {
 		s.DOWNLOAD(fmt.Sprintf("https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-%s.AppImage", arch), linuxdeployPath)
 	}
 	s.CHMOD(linuxdeployPath, 0755)
