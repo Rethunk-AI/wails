@@ -442,6 +442,7 @@ wails3 generate appimage [flags]
 | `-desktop` | Path to .desktop file | Required |
 | `-builddir` | Build directory | Temp directory |
 | `-output` | Output directory | `.` |
+| `-linuxdeploy` | Path to a linuxdeploy executable to use instead of downloading one (env `WAILS_APPIMAGE_LINUXDEPLOY`) | Downloaded |
 
 ## Service Commands
 
