@@ -63,6 +63,33 @@ func Test_generateAppImage(t *testing.T) {
 				s.CALLDEFER()
 			},
 		},
+		{
+			name: "Should leave the AppDir and no AppImage with NoPack",
+			options: &commands.GenerateAppImageOptions{
+				Binary:      "testapp",
+				Icon:        "appicon.png",
+				DesktopFile: "testapp.desktop",
+				NoPack:      true,
+			},
+			setup: func() {
+				s.CD("appimage_testfiles")
+				testDir := s.CWD()
+				_, err := s.EXEC(`go build -ldflags="-s -w" -o testapp`)
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.DEFER(func() {
+					s.CD(testDir)
+					s.RM("testapp")
+					if s.EXISTS("testapp-x86_64.AppImage") {
+						t.Error("NoPack produced an AppImage")
+					}
+				})
+			},
+			teardown: func() {
+				s.CALLDEFER()
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
