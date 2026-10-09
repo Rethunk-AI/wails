@@ -443,6 +443,7 @@ wails3 generate appimage [flags]
 | `-builddir` | Build directory | Temp directory |
 | `-output` | Output directory | `.` |
 | `-linuxdeploy` | Path to a linuxdeploy executable to use instead of downloading one (env `WAILS_APPIMAGE_LINUXDEPLOY`) | Downloaded |
+| `-nopack` | Prepare the AppDir but do not pack it into an AppImage | `false` |
 
 ## Service Commands
 

@@ -32,6 +32,7 @@ type GenerateAppImageOptions struct {
 	OutputDir   string `description:"Path to the output directory" default:"."`
 	BuildDir    string `description:"Path to the build directory"`
 	LinuxDeploy string `description:"Path to a linuxdeploy executable to use instead of downloading one (env WAILS_APPIMAGE_LINUXDEPLOY)"`
+	NoPack      bool   `description:"Prepare the AppDir but do not pack it into an AppImage"`
 }
 
 // toolPath is the explicit flag value, else the environment variable, made absolute. Empty means download.
@@ -247,10 +248,19 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 	if err := relocateWebKitHelpers(appDir, helperDirs); err != nil {
 		return err
 	}
+	if options.NoPack {
+		log(p, "AppDir prepared: "+appDir)
+		return nil
+	}
 	output, err = s.EXEC(linuxdeploy + " --output appimage")
 	if err != nil {
 		fmt.Println(string(output))
 		return err
+	}
+
+	if options.NoPack {
+		log(p, "AppDir prepared: "+appDir)
+		return nil
 	}
 
 	// Move file to output directory
