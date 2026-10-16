@@ -257,11 +257,6 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 		return fmt.Errorf("linuxdeploy failed: %w\n%s", err, commandOutputTail(string(output), 20))
 	}
 
-	if options.NoPack {
-		log(p, "AppDir prepared: "+appDir)
-		return nil
-	}
-
 	// Move file to output directory
 	s.MOVE(targetFile, options.OutputDir)
 
