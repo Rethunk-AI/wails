@@ -258,11 +258,6 @@ func generateAppImage(options *GenerateAppImageOptions) error {
 		return err
 	}
 
-	if options.NoPack {
-		log(p, "AppDir prepared: "+appDir)
-		return nil
-	}
-
 	// Move file to output directory
 	s.MOVE(targetFile, options.OutputDir)
 
