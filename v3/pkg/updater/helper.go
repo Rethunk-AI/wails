@@ -219,16 +219,20 @@ func runHelperSwapMode(target, newPath string, parentPID int, logPath string, wa
 		// here would first os.RemoveAll(target), which fails on the very
 		// lock that blocked the swap (and, on Unix .app bundles, needlessly
 		// deletes an intact original). Relaunch the original instead.
-		lg.logf("all swap attempts exhausted — relaunching intact original")
+		// On exit the app is quitting, so the original is kept but not relaunched.
+		lg.logf("all swap attempts exhausted — keeping intact original")
 		if _, err := os.Stat(target); err == nil {
-			if err := l.launch(target); err == nil {
+			var err error
+			if !applyOnExit {
+				err = l.launch(target)
+			}
+			if err == nil {
 				if err := os.RemoveAll(backup); err != nil {
 					lg.logf("backup cleanup: %v (non-fatal)", err)
 				}
 				return 13
-			} else {
-				lg.logf("relaunch original failed: %v — restoring backup", err)
 			}
+			lg.logf("relaunch original failed: %v — restoring backup", err)
 		}
 		// The target slot is missing (e.g. a directory swap cleared it
 		// before the move failed); fall back to the backup.
