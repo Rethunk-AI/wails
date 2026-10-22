@@ -24,8 +24,19 @@ func isNVIDIAGPU() bool {
 // screen, and otherwise the cards driving the connected screens decide. Xorg renders where its configuration says
 // (reverse PRIME puts NVIDIA behind the iGPU's screen), which cannot be read here, so an X11 session keeps the
 // workaround whenever the module is loaded.
+// nvidiaLoaded reports whether NVIDIA's kernel driver is loaded. A Flatpak sandbox's /sys has no module/, but the PCI
+// driver the module registers is listed under bus/ there too.
+func nvidiaLoaded(root string) bool {
+	for _, p := range []string{filepath.Join(root, "module", "nvidia"), filepath.Join(root, "bus", "pci", "drivers", "nvidia")} {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func nvidiaRenders(root string, getenv func(string) string) bool {
-	if _, err := os.Stat(filepath.Join(root, "module", "nvidia")); err != nil {
+	if !nvidiaLoaded(root) {
 		return false
 	}
 	// glvnd loads only the EGL vendors the list names, so a list settles it before offload can: no NVIDIA vendor
