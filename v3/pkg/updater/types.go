@@ -76,6 +76,9 @@ type Verification struct {
 	Digest        []byte `json:"digest,omitempty"`        // raw digest bytes
 	SignatureAlgo string `json:"signatureAlgo,omitempty"` // "ed25519", "ed25519ph", "ecdsa-p256"
 	Signature     []byte `json:"signature,omitempty"`     // raw signature bytes
+	// StatementSignature is an Ed25519 signature over Statement(version, platform, arch, digest): it binds the
+	// release's version and target to the file's digest, which Signature alone does not. See Config.RequireStatement.
+	StatementSignature []byte `json:"statementSignature,omitempty"`
 }
 
 // Progress is the payload of EventDownloadProgress.

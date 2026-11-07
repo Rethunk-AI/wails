@@ -36,6 +36,13 @@ type Config struct {
 	// distribution channel might be compromised or proxied.
 	PublicKey []byte
 
+	// RequireStatement makes a release install only when its Verification.StatementSignature verifies under
+	// PublicKey (an Ed25519 key) over the release's version, this Updater's Platform and Arch, and the downloaded
+	// file's digest, and when that version is newer than CurrentVersion. Signature alone covers the file's bytes,
+	// so a feed could otherwise serve an older signed build, or another platform's, labelled as the newer release.
+	// Leave it false while releases published before statements existed must still install.
+	RequireStatement bool
+
 	// CheckInterval, when non-zero, makes the Updater poll providers on a
 	// timer in the background. Pop-up-on-found behaviour is the same as a
 	// manual Check finding an update.

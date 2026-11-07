@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"hash"
 	"math/big"
+
+	"github.com/wailsapp/wails/v3/pkg/updater/internal/semver"
 )
 
 // verifier authenticates a downloaded artifact. The interface is unexported
@@ -116,6 +118,46 @@ func runVerification(computedDigest []byte, v *Verification, configKey []byte) e
 		return errors.New("updater: signature requires a public key but none configured")
 	}
 	return vf.verify(computedDigest, v, configKey)
+}
+
+// Statement is the canonical text a release's StatementSignature signs: the version it is published as, the platform
+// and arch it is for, and the digest of its file under the named algorithm.
+func Statement(version, platform, arch, digestAlgo string, digest []byte) []byte {
+	return []byte(fmt.Sprintf("wails-update-statement-v1\nversion=%s\nplatform=%s\narch=%s\ndigest=%s:%x\n",
+		version, platform, arch, digestAlgo, digest))
+}
+
+// digestAlgoOf is the algorithm the download streamed for v: ed25519ph forces sha512, an empty name means sha256.
+func digestAlgoOf(v *Verification) string {
+	if v.SignatureAlgo == "ed25519ph" {
+		return "sha512"
+	}
+	if v.DigestAlgo == "" {
+		return "sha256"
+	}
+	return v.DigestAlgo
+}
+
+// verifyStatement checks a release against what this Updater is installing: the statement signature must verify under
+// configKey for the release's version, cfg's platform and arch and the computed digest, and the version must be newer
+// than the running one.
+func verifyStatement(rel *Release, cfg *Config, computedDigest []byte) error {
+	v := rel.Verification
+	if v == nil || len(v.StatementSignature) == 0 {
+		return errors.New("updater: the release carries no statement signature")
+	}
+	pub, err := parseEd25519Public(cfg.PublicKey)
+	if err != nil {
+		return err
+	}
+	msg := Statement(rel.Version, cfg.Platform, cfg.Arch, digestAlgoOf(v), computedDigest)
+	if !ed25519.Verify(pub, msg, v.StatementSignature) {
+		return errors.New("updater: the statement signature does not match this release's version, platform and file")
+	}
+	if semver.Compare(rel.Version, cfg.CurrentVersion) <= 0 {
+		return fmt.Errorf("updater: release %s is not newer than the running %s", rel.Version, cfg.CurrentVersion)
+	}
+	return nil
 }
 
 func constantTimeEqual(a, b []byte) bool {
