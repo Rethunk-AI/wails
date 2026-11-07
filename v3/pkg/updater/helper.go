@@ -426,10 +426,13 @@ type helperLog struct {
 }
 
 func openHelperLog(path string) *helperLog {
+	var f *os.File
+	var err error
 	if path == "" {
-		path = filepath.Join(os.TempDir(), fmt.Sprintf("wails-update-%d.log", os.Getpid()))
+		f, err = os.CreateTemp("", "wails-update-*.log")
+	} else {
+		f, err = os.Create(path)
 	}
-	f, err := os.Create(path)
 	if err != nil {
 		return &helperLog{w: os.Stderr}
 	}
