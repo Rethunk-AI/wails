@@ -89,9 +89,15 @@ func New(cfg Config) (*Provider, error) {
 	if c == nil {
 		// No total Timeout: it would cut a large artifact off mid-body on a slow link. The manifest request is bounded
 		// by manifestTimeout and the download by downloadIdleTimeout instead.
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.ResponseHeaderTimeout = manifestTimeout
-		c = &http.Client{Transport: tr}
+		// An app may wrap http.DefaultTransport (a User-Agent, tracing); keep its wrapper rather than assert the stdlib
+		// type, and add the header timeout only when there is a plain transport to clone.
+		var rt http.RoundTripper = http.DefaultTransport
+		if base, ok := rt.(*http.Transport); ok {
+			tr := base.Clone()
+			tr.ResponseHeaderTimeout = manifestTimeout
+			rt = tr
+		}
+		c = &http.Client{Transport: rt}
 	}
 	c = wrapStripAuthOnRedirect(c)
 	return &Provider{cfg: cfg, client: c}, nil

@@ -34,6 +34,17 @@ func manifestJSON(t *testing.T, m map[string]any) []byte {
 	return b
 }
 
+type wrappedTransport struct{ http.RoundTripper }
+
+func TestNew_KeepsAWrappedDefaultTransport(t *testing.T) {
+	old := http.DefaultTransport
+	http.DefaultTransport = wrappedTransport{old}
+	t.Cleanup(func() { http.DefaultTransport = old })
+	if _, err := New(Config{URL: "https://example.com/manifest.json"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNew_RequiresURL(t *testing.T) {
 	if _, err := New(Config{}); err == nil {
 		t.Fatal("expected error for empty URL")
