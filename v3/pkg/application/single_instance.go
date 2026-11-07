@@ -103,25 +103,33 @@ func newSingleInstanceManager(app *App, options *SingleInstanceOptions) (*single
 	return manager, nil
 }
 
+// listenForSecondInstances reads the current manager per message, and
+// dispatchSecondInstance recovers a callback panic per message: this goroutine
+// is the only reader of secondInstanceBuffer, so one panic that ended it would
+// leave every later launch blocked on the full buffer.
 func listenForSecondInstances() {
-	defer handlePanic()
-	var zeroKey [32]byte
 	for encryptedData := range secondInstanceBuffer {
-		manager := secondInstanceTarget.Load()
-		if manager == nil {
-			continue
+		if manager := secondInstanceTarget.Load(); manager != nil {
+			manager.dispatchSecondInstance(encryptedData)
 		}
-		jsonData := []byte(encryptedData)
-		if manager.options.EncryptionKey != zeroKey {
-			var err error
-			if jsonData, err = decrypt(manager.options.EncryptionKey, encryptedData); err != nil {
-				continue // Skip invalid data
-			}
+	}
+}
+
+func (m *singleInstanceManager) dispatchSecondInstance(encryptedData string) {
+	defer handlePanic()
+	jsonData := []byte(encryptedData)
+
+	var zeroKey [32]byte
+	if m.options.EncryptionKey != zeroKey {
+		var err error
+		if jsonData, err = decrypt(m.options.EncryptionKey, encryptedData); err != nil {
+			return // Skip invalid data
 		}
-		var secondInstanceData SecondInstanceData
-		if err := json.Unmarshal(jsonData, &secondInstanceData); err == nil && manager.options.OnSecondInstanceLaunch != nil {
-			manager.options.OnSecondInstanceLaunch(secondInstanceData)
-		}
+	}
+
+	var secondInstanceData SecondInstanceData
+	if err := json.Unmarshal(jsonData, &secondInstanceData); err == nil && m.options.OnSecondInstanceLaunch != nil {
+		m.options.OnSecondInstanceLaunch(secondInstanceData)
 	}
 }
 
