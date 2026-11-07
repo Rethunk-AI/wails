@@ -281,7 +281,7 @@ func TestDispatchSecondInstanceSurvivesCallbackPanic(t *testing.T) {
 	prevTarget := secondInstanceTarget.Load()
 	secondInstanceTarget.Store(m)
 	t.Cleanup(func() { secondInstanceTarget.Store(prevTarget) })
-	in := make(chan string)
+	in := make(chan string, 2)
 	t.Cleanup(func() { close(in) })
 	go listenForSecondInstances(in)
 
