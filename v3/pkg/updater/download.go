@@ -129,7 +129,11 @@ func (u *Updater) verify(_ string, rel *Release) error {
 	u.mu.RLock()
 	digest := u.lastDigest
 	cfgKey := u.cfg.PublicKey
+	cfg := u.cfg
 	u.mu.RUnlock()
+	if rel.Verification == nil && cfg.RequireStatement {
+		return errors.New("updater: the release carries no verification block")
+	}
 	if rel.Verification == nil {
 		// No manifest verification block. Without a pinned key there is
 		// nothing to check; with one, runVerification fails closed. The
@@ -140,7 +144,13 @@ func (u *Updater) verify(_ string, rel *Release) error {
 	if digest == nil {
 		return errors.New("updater: no digest available; download path bug")
 	}
-	return runVerification(digest, rel.Verification, cfgKey)
+	if err := runVerification(digest, rel.Verification, cfgKey); err != nil {
+		return err
+	}
+	if cfg.RequireStatement {
+		return verifyStatement(rel, cfg, digest)
+	}
+	return nil
 }
 
 // progressTracker debounces progress callbacks from the provider and
