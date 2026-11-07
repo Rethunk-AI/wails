@@ -242,7 +242,7 @@ func TestSecondInstanceListenerUsesCurrentManager(t *testing.T) {
 			EncryptionKey:          key,
 			OnSecondInstanceLaunch: func(d SecondInstanceData) { got <- name + ":" + d.WorkingDir },
 		}})
-		once.Do(func() { go listenForSecondInstances() })
+		once.Do(func() { go listenForSecondInstances(secondInstanceBuffer) })
 
 		msg, err := encrypt(key, []byte(`{"workingDir":"/w"}`))
 		if err != nil {
@@ -278,26 +278,15 @@ func TestDispatchSecondInstanceSurvivesCallbackPanic(t *testing.T) {
 		},
 	}}
 
-	t.Cleanup(func() {
-		select {
-		case <-secondInstanceBuffer:
-		default:
-		}
-	})
+	prevTarget := secondInstanceTarget.Load()
+	secondInstanceTarget.Store(m)
+	t.Cleanup(func() { secondInstanceTarget.Store(prevTarget) })
+	in := make(chan string)
+	t.Cleanup(func() { close(in) })
+	go listenForSecondInstances(in)
 
-	go func() {
-		n := 0
-		for encryptedData := range secondInstanceBuffer {
-			m.dispatchSecondInstance(encryptedData)
-			n++
-			if n == 2 {
-				return
-			}
-		}
-	}()
-
-	secondInstanceBuffer <- `{"args":["a"]}`
-	secondInstanceBuffer <- `{"args":["b"]}`
+	in <- `{"args":["a"]}`
+	in <- `{"args":["b"]}`
 
 	select {
 	case <-second:

@@ -82,7 +82,7 @@ func newSingleInstanceManager(app *App, options *SingleInstanceOptions) (*single
 	}
 
 	secondInstanceTarget.Store(manager)
-	once.Do(func() { go listenForSecondInstances() })
+	once.Do(func() { go listenForSecondInstances(secondInstanceBuffer) })
 
 	// Create platform-specific lock
 	lock, err := newPlatformLock(manager)
@@ -103,12 +103,12 @@ func newSingleInstanceManager(app *App, options *SingleInstanceOptions) (*single
 	return manager, nil
 }
 
-// listenForSecondInstances reads the current manager per message, and
-// dispatchSecondInstance recovers a callback panic per message: this goroutine
-// is the only reader of secondInstanceBuffer, so one panic that ended it would
-// leave every later launch blocked on the full buffer.
-func listenForSecondInstances() {
-	for encryptedData := range secondInstanceBuffer {
+// listenForSecondInstances hands each message to the current manager until in
+// closes, and dispatchSecondInstance recovers a callback panic per message:
+// this goroutine is the only reader of secondInstanceBuffer, so one panic that
+// ended it would leave every later launch blocked on the full buffer.
+func listenForSecondInstances(in <-chan string) {
+	for encryptedData := range in {
 		if manager := secondInstanceTarget.Load(); manager != nil {
 			manager.dispatchSecondInstance(encryptedData)
 		}
