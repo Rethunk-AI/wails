@@ -5,6 +5,7 @@ package application
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/godbus/dbus/v5"
@@ -127,5 +128,26 @@ func TestLinuxLockReleaseFreesTheBusName(t *testing.T) {
 	reply, err = other.RequestName(busName, dbus.NameFlagDoNotQueue)
 	if err != nil || reply != dbus.RequestNameReplyPrimaryOwner {
 		t.Fatalf("after release: reply %d, err %v; want the name free", reply, err)
+	}
+}
+
+func TestSameExecutableTellsThisBinaryFromAnother(t *testing.T) {
+	if same, known := sameExecutable("/proc", os.Getpid()); !known || !same {
+		t.Fatalf("this process: same=%v known=%v", same, known)
+	}
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip(err)
+	}
+	cmd := exec.Command(sleep, "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	if same, known := sameExecutable("/proc", cmd.Process.Pid); !known || same {
+		t.Fatalf("another executable: same=%v known=%v", same, known)
+	}
+	if _, known := sameExecutable("/proc", 1<<30); known {
+		t.Fatal("a missing process was judged")
 	}
 }
