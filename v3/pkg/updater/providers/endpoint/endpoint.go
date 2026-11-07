@@ -345,6 +345,8 @@ type manifestArtifact struct {
 	Digest        string `json:"digest"`
 	SignatureAlgo string `json:"signatureAlgo"`
 	Signature     string `json:"signature"`
+	// StatementSignature is the base64 Ed25519 signature over the release's version, platform, arch and digest.
+	StatementSignature string `json:"statementSignature"`
 }
 
 // pickArtifact returns the first artifact matching platform and arch.
@@ -410,10 +412,17 @@ func archMatches(published, want string) bool {
 // omissions: silently dropping a digest or signature the publisher wrote
 // would downgrade verification the client was meant to perform.
 func buildVerification(a *manifestArtifact) (*updater.Verification, error) {
-	if a.Digest == "" && a.Signature == "" {
+	if a.Digest == "" && a.Signature == "" && a.StatementSignature == "" {
 		return nil, nil
 	}
 	v := &updater.Verification{}
+	if a.StatementSignature != "" {
+		s := decodeB64(a.StatementSignature)
+		if s == nil {
+			return nil, errors.New("artifact statementSignature is not valid base64")
+		}
+		v.StatementSignature = s
+	}
 	if a.Digest != "" {
 		d := decodeB64(a.Digest)
 		if d == nil {

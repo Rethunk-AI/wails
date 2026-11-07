@@ -28,6 +28,7 @@ import (
 	"github.com/pterm/pterm"
 	"github.com/wailsapp/wails/v3/internal/github"
 	"github.com/wailsapp/wails/v3/internal/term"
+	"github.com/wailsapp/wails/v3/pkg/updater"
 )
 
 // This file implements the `wails3 updater` command group: the publishing
@@ -225,6 +226,60 @@ type updaterManifestArtifact struct {
 	Digest        string `json:"digest,omitempty"`
 	SignatureAlgo string `json:"signatureAlgo,omitempty"`
 	Signature     string `json:"signature,omitempty"`
+	// StatementSignature binds version, platform, arch and digest; see updater.Statement.
+	StatementSignature string `json:"statementSignature,omitempty"`
+}
+
+// UpdaterStatementOptions are the flags for `wails3 updater statement`.
+type UpdaterStatementOptions struct {
+	Manifest string `name:"manifest" description:"Manifest to add statement signatures to" default:"manifest.json"`
+	Key      string `name:"key" description:"Private key path"`
+}
+
+// UpdaterStatement signs, for every artifact of a finished manifest, the statement of its version, platform, arch and
+// digest, and writes it back. Run it after any edit to an artifact's platform or arch, which the statement covers.
+func UpdaterStatement(options *UpdaterStatementOptions) error {
+	DisableFooter = true
+	if options.Key == "" {
+		return errors.New("please provide the private key with -key")
+	}
+	priv, err := loadUpdaterPrivateKey(options.Key)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(options.Manifest)
+	if err != nil {
+		return err
+	}
+	var m updaterManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return fmt.Errorf("decode %s: %w", options.Manifest, err)
+	}
+	for i := range m.Artifacts {
+		a := &m.Artifacts[i]
+		digest, err := decodeUpdaterB64(a.Digest)
+		if err != nil || len(digest) == 0 {
+			return fmt.Errorf("%s: the artifact has no usable digest", a.URL)
+		}
+		algo := a.DigestAlgo
+		if a.SignatureAlgo == "ed25519ph" {
+			algo = "sha512"
+		}
+		sig, err := priv.Sign(nil, updater.Statement(m.Version, a.Platform, a.Arch, algo, digest), &ed25519.Options{})
+		if err != nil {
+			return err
+		}
+		a.StatementSignature = base64.StdEncoding.EncodeToString(sig)
+	}
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(options.Manifest, append(out, '\n'), 0o644); err != nil {
+		return err
+	}
+	pterm.Success.Printfln("Signed statements for %d artifact(s) in %s", len(m.Artifacts), options.Manifest)
+	return nil
 }
 
 // UpdaterManifest generates an update manifest for the given artifact files
@@ -331,6 +386,8 @@ type UpdaterVerifyOptions struct {
 	Manifest  string `name:"manifest" description:"Path to the manifest to verify" default:"manifest.json"`
 	PublicKey string `name:"publickey" description:"Public key: path to the .pub file, or a base64 string"`
 	Dir       string `name:"dir" description:"Directory containing the artifact files. Defaults to the manifest's directory"`
+	// RequireStatement fails an artifact without a valid statement signature.
+	RequireStatement bool `name:"require-statement" description:"Require a valid statement signature on every artifact"`
 }
 
 // UpdaterVerify re-checks every artifact in a manifest against the files on
@@ -378,7 +435,11 @@ func UpdaterVerify(options *UpdaterVerifyOptions) error {
 		if name == "" {
 			name = filepath.Base(strings.SplitN(a.URL, "?", 2)[0])
 		}
-		if err := verifyUpdaterArtifact(filepath.Join(dir, name), &a, pub); err != nil {
+		err := verifyUpdaterArtifact(filepath.Join(dir, name), &a, pub)
+		if err == nil && (options.RequireStatement || a.StatementSignature != "") {
+			err = verifyUpdaterStatement(m.Version, &a, pub)
+		}
+		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
 			pterm.Error.Printfln("%s: %v", name, err)
 			continue
@@ -398,6 +459,30 @@ func UpdaterVerify(options *UpdaterVerifyOptions) error {
 		return fmt.Errorf("%d of %d artifact(s) failed verification", len(failures), len(m.Artifacts))
 	}
 	pterm.Success.Printfln("Manifest %s verified: version %s, %d artifact(s)", options.Manifest, m.Version, len(m.Artifacts))
+	return nil
+}
+
+// verifyUpdaterStatement checks an artifact's statement signature against its own manifest fields.
+func verifyUpdaterStatement(version string, a *updaterManifestArtifact, pub crypto.PublicKey) error {
+	key, ok := pub.(ed25519.PublicKey)
+	if !ok {
+		return errors.New("a statement signature needs an Ed25519 -publickey")
+	}
+	sig, err := decodeUpdaterB64(a.StatementSignature)
+	if err != nil || len(sig) == 0 {
+		return errors.New("the artifact has no valid statementSignature")
+	}
+	digest, err := decodeUpdaterB64(a.Digest)
+	if err != nil {
+		return err
+	}
+	algo := a.DigestAlgo
+	if a.SignatureAlgo == "ed25519ph" {
+		algo = "sha512"
+	}
+	if !ed25519.Verify(key, updater.Statement(version, a.Platform, a.Arch, algo, digest), sig) {
+		return errors.New("statement signature does not match the manifest's version, platform, arch and digest")
+	}
 	return nil
 }
 
