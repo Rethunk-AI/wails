@@ -476,11 +476,15 @@ func (u *Updater) startHelper(applyOnExit bool) error {
 	u.mu.Unlock()
 
 	target := bundleTarget(self)
-	// Include PID so concurrent helpers (e.g. test runs, multiple installed
-	// Wails apps updating at the same time) don't truncate each other's logs.
-	logPath := filepath.Join(os.TempDir(), fmt.Sprintf("wails-update-%d.log", os.Getpid()))
-	readyPath := filepath.Join(os.TempDir(), fmt.Sprintf("wails-update-%d-%d.ready", os.Getpid(), time.Now().UnixNano()))
-	_ = os.Remove(readyPath)
+	// The log and ready files live in a private directory with an unpredictable name, so another user cannot plant a
+	// symlink at a guessable /tmp path for the helper to write through.
+	helperDir, err := os.MkdirTemp("", "wails-update-helper-")
+	if err != nil {
+		u.reclaimStaging(ownedDir)
+		return fmt.Errorf("updater: helper directory: %w", err)
+	}
+	logPath := filepath.Join(helperDir, "update.log")
+	readyPath := filepath.Join(helperDir, "ready")
 	defer os.Remove(readyPath)
 	env := append(os.Environ(),
 		envHelperMode+"=1",
@@ -498,12 +502,14 @@ func (u *Updater) startHelper(applyOnExit bool) error {
 	cmd := newDetachedCommand(self)
 	cmd.Env = env
 	if err := startHelper(cmd); err != nil {
+		_ = os.RemoveAll(helperDir)
 		u.reclaimStaging(ownedDir)
 		return wrapHelperSpawnError(err)
 	}
 	if err := waitForHelperReady(readyPath, timeout); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		_ = os.RemoveAll(helperDir)
 		u.reclaimStaging(ownedDir)
 		return err
 	}

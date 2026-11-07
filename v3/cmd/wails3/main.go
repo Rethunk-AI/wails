@@ -228,6 +228,7 @@ func main() {
 		return commands.UpdaterManifest(&updaterManifestFlags, updaterManifest.OtherArgs())
 	})
 	updaterManifest.LongDescription("\nUsage: wails3 updater manifest -version <version> [flags] <files or directories...>\n\nDigests every artifact, signs it when -key is given, infers platform/arch\nfrom the filenames and writes a Wails Update Manifest ready to upload\nalongside the artifacts.")
+	updaterCmd.NewSubCommandFunction("statement", "Sign each artifact's version, platform, arch and digest in a finished manifest", commands.UpdaterStatement)
 	updaterCmd.NewSubCommandFunction("verify", "Verify a manifest against the artifact files and public key", commands.UpdaterVerify)
 
 	// iOS tools

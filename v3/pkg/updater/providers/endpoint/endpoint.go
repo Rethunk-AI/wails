@@ -35,6 +35,12 @@ import (
 // than half-parsed.
 const schemaVersionMax = 1
 
+// manifestTimeout bounds the whole manifest request, and the wait for an artifact's response headers.
+const manifestTimeout = 30 * time.Second
+
+// downloadIdleTimeout ends an artifact download that receives no bytes for this long (a variable so tests can shorten it).
+var downloadIdleTimeout = 30 * time.Second
+
 // Config configures the endpoint provider.
 type Config struct {
 	// URL of the update manifest. Required.
@@ -81,7 +87,11 @@ func New(cfg Config) (*Provider, error) {
 	}
 	c := cfg.HTTPClient
 	if c == nil {
-		c = &http.Client{Timeout: 30 * time.Second}
+		// No total Timeout: it would cut a large artifact off mid-body on a slow link. The manifest request is bounded
+		// by manifestTimeout and the download by downloadIdleTimeout instead.
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.ResponseHeaderTimeout = manifestTimeout
+		c = &http.Client{Transport: tr}
 	}
 	c = wrapStripAuthOnRedirect(c)
 	return &Provider{cfg: cfg, client: c}, nil
@@ -103,6 +113,8 @@ func (p *Provider) Check(ctx context.Context, req updater.CheckRequest) (*update
 		return nil, err
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, manifestTimeout)
+	defer cancel()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpointURL, nil)
 	if err != nil {
 		return nil, err
@@ -169,6 +181,12 @@ func (p *Provider) Check(ctx context.Context, req updater.CheckRequest) (*update
 	if filename == "" {
 		filename = filenameFromURL(resolved)
 	}
+	if !plainFilename(filename) {
+		return nil, fmt.Errorf("endpoint: artifact filename %q is not a plain file name", filename)
+	}
+	if art.Size < 0 {
+		return nil, fmt.Errorf("endpoint: artifact size %d is negative", art.Size)
+	}
 	filetype := art.Filetype
 	if filetype == "" {
 		filetype = filetypeFromFilename(filename)
@@ -219,6 +237,10 @@ func (p *Provider) Download(ctx context.Context, rel *updater.Release, dst io.Wr
 		return errors.New("endpoint: release metadata missing artifact URL")
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	idle := time.AfterFunc(downloadIdleTimeout, cancel)
+	defer idle.Stop()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		return err
@@ -239,7 +261,12 @@ func (p *Provider) Download(ctx context.Context, rel *updater.Release, dst io.Wr
 		return fmt.Errorf("endpoint: download: HTTP %d", resp.StatusCode)
 	}
 
-	total := rel.Artifact.Size
+	// The manifest's declared size is the cap: a feed cannot stream past it to fill the disk.
+	declared := rel.Artifact.Size
+	if declared > 0 && resp.ContentLength > declared {
+		return fmt.Errorf("endpoint: download is %d bytes, the manifest declares %d", resp.ContentLength, declared)
+	}
+	total := declared
 	if total == 0 && resp.ContentLength > 0 {
 		total = resp.ContentLength
 	}
@@ -248,6 +275,10 @@ func (p *Provider) Download(ctx context.Context, rel *updater.Release, dst io.Wr
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
+			idle.Reset(downloadIdleTimeout)
+			if declared > 0 && written+int64(n) > declared {
+				return fmt.Errorf("endpoint: download exceeds the manifest's declared %d bytes", declared)
+			}
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return werr
 			}
@@ -257,6 +288,9 @@ func (p *Provider) Download(ctx context.Context, rel *updater.Release, dst io.Wr
 			}
 		}
 		if rerr == io.EOF {
+			if declared > 0 && written != declared {
+				return fmt.Errorf("endpoint: download is %d bytes, the manifest declares %d", written, declared)
+			}
 			return nil
 		}
 		if rerr != nil {
@@ -345,6 +379,8 @@ type manifestArtifact struct {
 	Digest        string `json:"digest"`
 	SignatureAlgo string `json:"signatureAlgo"`
 	Signature     string `json:"signature"`
+	// StatementSignature is the base64 Ed25519 signature over the release's version, platform, arch and digest.
+	StatementSignature string `json:"statementSignature"`
 }
 
 // pickArtifact returns the first artifact matching platform and arch.
@@ -410,10 +446,17 @@ func archMatches(published, want string) bool {
 // omissions: silently dropping a digest or signature the publisher wrote
 // would downgrade verification the client was meant to perform.
 func buildVerification(a *manifestArtifact) (*updater.Verification, error) {
-	if a.Digest == "" && a.Signature == "" {
+	if a.Digest == "" && a.Signature == "" && a.StatementSignature == "" {
 		return nil, nil
 	}
 	v := &updater.Verification{}
+	if a.StatementSignature != "" {
+		s := decodeB64(a.StatementSignature)
+		if s == nil {
+			return nil, errors.New("artifact statementSignature is not valid base64")
+		}
+		v.StatementSignature = s
+	}
 	if a.Digest != "" {
 		d := decodeB64(a.Digest)
 		if d == nil {
@@ -484,6 +527,19 @@ func headersAllowedFor(manifestURL, target string) bool {
 		return false
 	}
 	return !(strings.EqualFold(m.Scheme, "https") && strings.EqualFold(t.Scheme, "http"))
+}
+
+// plainFilename reports a bare file name: no directory part, no dot segment, no control characters.
+func plainFilename(name string) bool {
+	if name == "" || name == "." || name == ".." || len(name) > 255 || strings.ContainsAny(name, `/\:`) {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func filenameFromURL(u string) string {
