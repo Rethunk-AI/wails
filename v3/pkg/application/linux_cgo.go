@@ -1850,7 +1850,7 @@ func runChooserDialog(window pointer, allowMultiple, createFolders, showHidden b
 
 			for _, filter := range filters {
 				cName := C.CString(filter.DisplayName)
-				cPattern := C.CString(filter.Pattern)
+				cPattern := C.CString(caseGlobs(filter.Pattern))
 				C.add_file_filter(dialog, filterStore, cName, cPattern)
 				C.free(unsafe.Pointer(cName))
 				C.free(unsafe.Pointer(cPattern))

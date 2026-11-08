@@ -2374,7 +2374,7 @@ func runChooserDialog(window pointer, allowMultiple, createFolders, showHidden b
 		displayStr := C.CString(filter.DisplayName)
 		C.gtk_file_filter_set_name(f, displayStr)
 		C.free(unsafe.Pointer(displayStr))
-		patterns := strings.Split(filter.Pattern, ";")
+		patterns := strings.Split(caseGlobs(filter.Pattern), ";")
 		for _, pattern := range patterns {
 			patternStr := C.CString(strings.TrimSpace(pattern))
 			C.gtk_file_filter_add_pattern(f, patternStr)

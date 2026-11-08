@@ -914,7 +914,7 @@ func finishMultipleFiles(finish func(uintptr, uintptr, uintptr) uintptr, source,
 func addFileFilter(dialog, filters uintptr, name, pattern string) {
 	filter := gtk_file_filter_new()
 	gtk_file_filter_set_name(filter, name)
-	for _, p := range splitAndTrim(pattern, ";") {
+	for _, p := range splitAndTrim(caseGlobs(pattern), ";") {
 		if p != "" {
 			gtk_file_filter_add_pattern(filter, p)
 		}
@@ -1185,7 +1185,7 @@ func setFileChooserFolder(dialog uintptr, folder string) bool {
 func addFileChooserFilter(dialog uintptr, name, pattern string) {
 	filter := gtk_file_filter_new()
 	gtk_file_filter_set_name(filter, name)
-	for _, p := range splitAndTrim(pattern, ";") {
+	for _, p := range splitAndTrim(caseGlobs(pattern), ";") {
 		if p != "" {
 			gtk_file_filter_add_pattern(filter, p)
 		}
